@@ -1,0 +1,117 @@
+﻿<!DOCTYPE html>
+
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <title>Utility Process Top Crashes</title>
+  <link rel="stylesheet" href="crashstyles.css">
+  <style>
+  </style>
+</head>
+<body onload="onLoad()">
+  <script type="text/javascript">
+    function expandElement(id) {
+      var e = document.getElementById(id);
+      if (e.style.display == 'none') {
+        e.style.display = 'block';
+      } else {
+        e.style.display = 'none';
+      }
+      return false;
+    }
+
+    function filter(el, type) {
+      switch (type) {
+        case 'webrender':
+        case 'd3d11':
+        case 'basic':
+          var col = document.getElementsByClassName('compositor');
+          Array.prototype.forEach.call(col, function (item) {
+            if (item.textContent == 'webrender') {
+
+            }
+          })
+          break;
+      }
+    }
+
+    function getAnchor() {
+      var currentUrl = document.URL,
+        urlParts = currentUrl.split('#');
+      return (urlParts.length > 1) ? urlParts[1] : null;
+    }
+
+    function onLoad() {
+      var anchor = getAnchor();
+      if (anchor != null) {
+        expandElement(anchor.substr(1));
+      }
+    }
+  </script>
+
+  <div id="mainlist">
+    <div id="options">
+      <div class="filterbutton" onclick="return filter(this, 'oom');">OOM</div>
+      <div class="filterbutton" onclick="return filter(this, 'x86');">x86</div>
+      <div class="filterbutton" onclick="return filter(this, 'x86-64');">x86-64</div>
+      <div class="filterbutton" onclick="return filter(this, 'webrender');">Webrender</div>
+      <div class="filterbutton" onclick="return filter(this, 'd3d11');">D3D11</div>
+      <div class="filterbutton" onclick="return filter(this, 'basic');">Basic</div>
+    </div>
+
+    <div id="listheader">
+      <div id="hdr-rank">rank</div>
+      <div id="hdr-percent">%</div>
+      <div id="hdr-signature">signature</div>
+      <div id="hdr-clientcount">clients</div>
+      <div id="hdr-count">count</div>
+    </div>
+
+    <!-- start of template -->
+    <!-- start of signature template -->
+    <div class="signature" onclick="return expandElement('$expandosig');" id="a$expandosig">
+      <div id="hdr-rank">$rank</div>
+      <div id="hdr-percent">$percent</div>
+      <div id="hdr-signature"><a href='#a$expandosig'>$signature</a></div>
+      <div id="hdr-clientcount">$clientcount</div>
+      <div id="hdr-count">$count</div>
+    </div>
+    <!-- end of signature template -->
+    <!-- start of signature meta template -->
+    <div style="display:none;" id="$expandosig">
+      <div class="signature-meta" onclick="return expandElement('$expandosig');">
+        <div class="meta-title">Operating System</div><div class="meta-data">$os</div><br />
+        <div class="meta-title">Firefox Version</div><div class="meta-data">$fxver</div><br />
+        <div class="meta-title">Version</div><div class="meta-data">$osver</div><br />
+        <div class="meta-title">Arch</div><div class="meta-data">$arch</div><br />
+        <div class="meta-title">Compositor</div><div class="meta-data">$compositor</div>
+      </div>
+      <div class="report">
+        <div class="report-header">
+          <div class="report-title">Report</div>
+          <div class="report-meta-data-long">Type</div>
+          <div class="report-meta-data-short">OOM Size</div>
+          <div class="report-meta-data-short">Vendor</div>
+          <div class="report-meta-data-long">Generation / Chipset</div>
+        </div>
+      </div>
+      <!-- end of signature meta template -->
+      <!-- start of report template -->
+      <div class="report">
+        <!-- meta data per report -->
+        <div class="report-meta" onclick="return expandElement('$expandostack');">
+          <div class="report-title">$rindex</div>
+          <div class="report-meta-data-long">$type</div>
+          <div class="report-meta-data-short">$oomsize</div>
+          <div class="report-meta-data-short">$devvendor</div>
+          <div class="report-meta-data-long">$devgen / $devchipset</div>
+        </div>
+        <div class="stack" style="display:none;" id="$expandostack" );">$stack</div>
+      </div>
+      <!-- end of report template -->
+    </div> <!-- NOTE this orphaned div for the signature data expando stuff! -->
+    <!-- end of template -->
+  </div>
+  <div class="processeddate">$processeddate</div>
+</body>
+</html>
