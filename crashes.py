@@ -105,7 +105,9 @@ def generateSourceLink(frame):
       srcUrl += '#L-'
       srcUrl += str(srcLineNumber)
     elif tokenList[0].find('hg') == 0:
-      srcUrl = 'https://hg.mozilla.org/mozilla-central/file/'
+      srcUrl = 'https://'
+      srcUrl += tokenList[1]
+      srcUrl += '/file/'
       srcUrl += tokenList[3]
       srcUrl += '/'
       srcUrl += tokenList[2]
