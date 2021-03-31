@@ -8,6 +8,7 @@ import re
 import sys
 import html
 import getopt
+import fx_crash_sig
 
 from string import Template
 # pip install fx-crash-sig
@@ -15,6 +16,8 @@ from fx_crash_sig.crash_processor import CrashProcessor
 from collections import Counter
 from urllib.request import urlopen
 from datetime import datetime, timedelta
+
+STAGE_SYMBOLS_API = "https://symbolication.stage.mozaws.net/symbolicate/v5"
 
 # todo:
 # src links
@@ -35,15 +38,19 @@ MostCommonLength = 50
 # When generating a report, signatures with crash counts
 # lower than this value will not be included in the report.
 MinCrashCount = 1
+# Maximum number of reports to include for a signature
+MaxReportCount = 30
+
 # Load our local json file for testing
 LoadLocally = False
 LocalJsonFile = "GPU_Raw_Crash_Data_2021_03_19.json"
 
-jsonUrl = "https://sql.telemetry.mozilla.org/api/queries/78997/results.json?api_key=mqEnKItx6gT7wjyl2h0joPOBJWeX6GYkbuFOzqmd"
+jsonUrl = "https://sql.telemetry.mozilla.org/api/queries/78997/results.json?api_key=0XTUThlCYJLBQaKsc8cR4296Y6fasm8vezkZSNPg"
 outputFilename = "output" #.html
 dbFilename = "crashreports" #.json
 
-proc = CrashProcessor()
+proc = CrashProcessor(40, STAGE_SYMBOLS_API)
+# proc = CrashProcessor()
 pp = pprint.PrettyPrinter(indent=2)
 
 def symbolicate(ping):
@@ -59,6 +66,55 @@ def sig_of_sym(payload):
     return proc.get_signature_from_symbolicated(payload).signature
   except:
     return ""
+
+def progress(count, total, status=''):
+    bar_len = 60
+    filled_len = int(round(bar_len * count / float(total)))
+
+    percents = round(100.0 * count / float(total), 1)
+    bar = '=' * filled_len + '-' * (bar_len - filled_len)
+
+    sys.stdout.write('[%s] %s%s ...%s\r' % (bar, percents, '%', status))
+    sys.stdout.flush()
+
+def generateSourceLink(frame):
+    # examples:
+    # https://hg.mozilla.org/mozilla-central/file/2da6d806f45732e169fd8e7ea9a9761fa7fed93d/netwerk/protocol/http/OpaqueResponseUtils.cpp#l208
+    # https://crash-stats.mozilla.org/sources/highlight/?url=https://gecko-generated-sources.s3.amazonaws.com/7d3f7c890af...e97be06f948921153/ipc/ipdl/PCompositorManagerParent.cpp&line=200#L-200
+    # 'file': 's3:gecko-generated-sources:8276fd848664bea270...8e363bdbc972cdb7eb661c4043de93ce27810b54/ipc/ipdl/PWebGLParent.cpp:',
+    # 'file': 'hg:hg.mozilla.org/mozilla-central:dom/canvas/WebGLParent.cpp:52d2c9e672d0a0c50af4d6c93cc0239b9e751d18',
+    # 'line': 59,
+    srcLineNumer = str()
+    srcfileData = str()
+    srcUrl = str()
+    try:
+      srcLineNumber = frame['line']
+      srcfileData = frame['file']
+      tokenList = srcfileData.split(':')
+      if (len(tokenList) != 4):
+        print("bad token list " + tokenList)
+        return str()
+    except:
+      return str()
+
+    if tokenList[0].find('s3') == 0:
+      srcUrl = 'https://crash-stats.mozilla.org/sources/highlight/?url=https://gecko-generated-sources.s3.amazonaws.com/'
+      srcUrl += tokenList[2]
+      srcUrl += '&line='
+      srcUrl += str(srcLineNumber)
+      srcUrl += '#L-'
+      srcUrl += str(srcLineNumber)
+    elif tokenList[0].find('hg') == 0:
+      srcUrl = 'https://hg.mozilla.org/mozilla-central/file/'
+      srcUrl += tokenList[3]
+      srcUrl += '/'
+      srcUrl += tokenList[2]
+      srcUrl += '#l' + str(srcLineNumber)
+    else:
+      #print("Unknown src annoutation source") this happens a lot
+      return str()
+
+    return srcUrl
 
 def processStack(frames):
   # Normalized function names we can consider the same in calculating
@@ -129,10 +185,16 @@ def processStack(frames):
         skipFrame = True
         break
 
-    markupStack += escape(functionCall) + '</div>'
+    srcUrl = generateSourceLink(frame)
+
+    if (len(srcUrl) > 0):
+      markupStack += escape(functionCall) + ' (<a href="' + srcUrl + '">' + 'src' + '</a>)</div>'
+    else:
+      markupStack += escape(functionCall) + '</div>'
 
     if skipFrame is False:
       hashData += functionCall
+
 
   # append meta data to our hashData so it applies to uniqueness
   hashData += operatingSystem
@@ -142,7 +204,7 @@ def processStack(frames):
   hashData += firefoxVer
 
   hash = hashlib.md5(hashData.encode('utf-8')).hexdigest()
-  return hash, stack
+  return hash, markupStack
 
 # cache a report in a local file
 def cacheCrashes(reports):
@@ -247,6 +309,10 @@ else:
   dataset = json.loads(urlopen(jsonUrl).read().decode("utf-8"))
   print("done.")
 
+crashesToProcess = len(dataset["query_result"]["data"]["rows"])
+if  crashesToProcess > CrashProcessMax:
+  crashesToProcess = CrashProcessMax
+
 for recrow in dataset["query_result"]["data"]["rows"]:
 
   if totalCrashesProcessed == CrashProcessMax:
@@ -278,7 +344,6 @@ for recrow in dataset["query_result"]["data"]["rows"]:
 
   # Ignore crashes older than 7 days
   if not checkCrashAge(crashDate):
-    #print("tossing crash from %s" % crashDate)
     continue
 
   # check if the crash id is processed, if so continue
@@ -298,7 +363,7 @@ for recrow in dataset["query_result"]["data"]["rows"]:
   if found:
     sigCounter[signature] = len(reports[signature]['reportList'])
     totalCrashesProcessed += 1
-    print('.', end='', flush=True)
+    progress(totalCrashesProcessed, crashesToProcess)
     continue
   
   #print("processing: %s" % crashId)
@@ -306,9 +371,6 @@ for recrow in dataset["query_result"]["data"]["rows"]:
   # symbolicate and return payload result
   payload = symbolicate(props)
   signature = sig_of_sym(payload)
-
-  #pp.pprint(signature)
-  #break
 
   if len(signature) == 0:
     print("zero len sig")
@@ -378,7 +440,8 @@ for recrow in dataset["query_result"]["data"]["rows"]:
   sigCounter[signature] = len(reports[signature]['reportList'])
   totalCrashesProcessed += 1
 
-  print('.', end='', flush=True)
+  progress(totalCrashesProcessed, crashesToProcess)
+
 print('\n')
 
 ###########################################################
@@ -450,9 +513,6 @@ if DoHTML is True:
   eIndex = template.index('<!-- end of report template -->')
   reportTemplate = template[sIndex:eIndex]
 
-  #s = Template('$who likes $what')
-  #s.substitute(who='tim', what='kung pao')
-
   resultFile = open(("%s.html" % outputFilename), "w")
   resultFile.write(header)
 
@@ -485,6 +545,8 @@ if DoHTML is True:
     idx = 0
     for report in reports[sig]['reportList']:
       idx = idx + 1
+      if idx > MaxReportCount:
+        break
       oombytes = report['oom_size'] if not None else '0'
       resultFile.write(Template(reportTemplate)
                        .substitute(expandostack=('st'+str(signatureIndex)+'-'+str(idx)), rindex=idx, type=report['type'],
