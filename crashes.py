@@ -11,45 +11,56 @@ import getopt
 import fx_crash_sig
 
 from string import Template
-# pip install fx-crash-sig
 from fx_crash_sig.crash_processor import CrashProcessor
 from collections import Counter
 from urllib.request import urlopen
 from datetime import datetime, timedelta
 
-STAGE_SYMBOLS_API = "https://symbolication.stage.mozaws.net/symbolicate/v5"
-
-# todo:
-# src links
-# first stack should be expanded
-# what do we do about low client counts?
-
 # process types
 # https://searchfox.org/mozilla-central/source/toolkit/components/crashes/CrashManager.jsm#162
 
+###########################################################
+# Usage
+###########################################################
+# -u (url)   : json datafile url
+# -n (name)  : local json data filename excluding extension
+# -d (name)  : html output filename excluding extension
+
+###########################################################
 # Global consts
-DoHTML = True # non html is not maintained
-# Maximum number of raw crashes to process
+###########################################################
+
+# The default symbolication server to use.
+SymbolServerUrl = "https://symbolication.stage.mozaws.net/symbolicate/v5"
+# Max stack depth for symbolication
+MaxStackDepth = 50
+# Text vs. html output switch
+DoHTML = True # Note, the non-html path is not maintained
+# Maximum number of raw crashes to process. This matches
+# the limit value of re:dash queries. Reduce for testing
+# purposes.
 CrashProcessMax = 3000
-# Maximum number of raw crashes to process
-#NewCrashProcessMax = 1000
-# Length of the top crashes report
+# Signature list length of the resulting top crashes report
 MostCommonLength = 50
 # When generating a report, signatures with crash counts
 # lower than this value will not be included in the report.
 MinCrashCount = 1
-# Maximum number of reports to include for a signature
+# Maximum number of crash reports to include for each signature
+# in the final report. Limits the size of the resulting html.
 MaxReportCount = 30
-
-# Load our local json file for testing
+# Set to True to target a local json file for testing
 LoadLocally = False
 LocalJsonFile = "GPU_Raw_Crash_Data_2021_03_19.json"
-
+# Default json file url if not specified via the command line.
 jsonUrl = "https://sql.telemetry.mozilla.org/api/queries/78997/results.json?api_key=0XTUThlCYJLBQaKsc8cR4296Y6fasm8vezkZSNPg"
+# Default report output filename if not specified via
+# the command line.
 outputFilename = "output" #.html
+# Default filename for the crash stack cache file if
+# not specified via the command line.
 dbFilename = "crashreports" #.json
 
-proc = CrashProcessor(40, STAGE_SYMBOLS_API)
+proc = CrashProcessor(MaxStackDepth, SymbolServerUrl)
 # proc = CrashProcessor()
 pp = pprint.PrettyPrinter(indent=2)
 
@@ -59,7 +70,7 @@ def symbolicate(ping):
   except:
     return None
 
-def sig_of_sym(payload):
+def generateSignature(payload):
   if payload is None:
     return ""
   try:
@@ -208,7 +219,7 @@ def processStack(frames):
   hash = hashlib.md5(hashData.encode('utf-8')).hexdigest()
   return hash, markupStack
 
-# cache a report in a local file
+# Cache a report to a local file under subfolder 'crashes'
 def cacheCrashes(reports):
   os.makedirs("crashes", exist_ok=True)
   for sig in reports:
@@ -224,11 +235,15 @@ def findCrash(crashId):
   file = "crashes/" + crashId + ".txt"
   return os.path.isfile(file)
 
+# Cache the reports database to a local json file. Speeds
+# up symbolication runs across days by avoid re-symbolicating
+# reports.
 def cacheReports(reports):
   file = ("%s.json" % dbFilename)
   with open(file, "w") as database:
       database.write(json.dumps(reports))
 
+# Load the local report database
 def loadReports():
   file = ("%s.json" % dbFilename)
   data = dict()
@@ -372,7 +387,7 @@ for recrow in dataset["query_result"]["data"]["rows"]:
 
   # symbolicate and return payload result
   payload = symbolicate(props)
-  signature = sig_of_sym(payload)
+  signature = generateSignature(payload)
 
   if len(signature) == 0:
     print("zero len sig")
