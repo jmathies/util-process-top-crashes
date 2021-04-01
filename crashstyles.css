@@ -1,0 +1,167 @@
+﻿body {
+  font: 14px Helvetica, Arial, sans-serif;
+}
+
+.comp {
+}
+
+#mainlist {
+  margin: 10px;
+}
+
+#options {
+  background-color: #BCC6CC;
+  width: 100%;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  border: 1px solid gray;
+  justify-content: center;
+  display: flex;
+  display: none;
+}
+
+.filterbutton {
+  margin: 5px;
+  font-size: 14px;
+  border-radius: 3px;
+  border: 1px solid black;
+  background-color: #3192d5;
+  width: 100px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  text-align: center;
+  color: white;
+}
+
+#listheader {
+  display: inline-block;
+  background-color: #BCC6CC;
+  width: 100%;
+  border: 1px solid gray;
+}
+
+#hdr-rank {
+  display: inline-block;
+  padding: 5px;
+  width: 5%;
+}
+
+#hdr-percent {
+  display: inline-block;
+  padding: 5px;
+  width: 5%;
+}
+
+#hdr-signature {
+  display: inline-block;
+  padding: 5px;
+  width: 70%;
+}
+
+#hdr-clientcount {
+  display: inline-block;
+  padding: 5px;
+  width: 5%;
+}
+
+#hdr-count {
+  display: inline-block;
+  padding: 5px;
+  width: 5%;
+}
+
+.signature {
+  width: 100%;
+  border-top: 1px solid gray;
+  border-right: 1px solid gray;
+  border-left: 1px solid gray;
+  background-color: #e8ebef;
+  margin-top: 7px;
+}
+
+.signature-meta {
+  font-size: 12px;
+  width: 100%;
+  border-top: 1px solid gray;
+  border-right: 1px solid gray;
+  border-left: 1px solid gray;
+  border-bottom: 1px solid gray;
+  background-color: #e1eef7;
+  display: inline-block;
+  margin-bottom: 0px;
+}
+
+.meta-title {
+  margin-left: 10px;
+  display: inline-block;
+  border: 0px solid lightgrey;
+  width: 200px;
+}
+
+.meta-data {
+  display: inline-block;
+  border: 0px solid lightgrey;
+  margin:1px;
+  width: auto;
+}
+
+.report-header {
+  font-size: 12px;
+  background-color: #e1eef7;
+  white-space: nowrap;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  padding-left: 5px;
+}
+
+.report {
+  width: 100%;
+  font-size: 12px;
+  border-left: 1px solid gray;
+  border-right: 1px solid gray;
+  border-bottom: 1px solid gray;
+  background-color: #fafafa;
+}
+
+.report-meta {
+  width: 100%;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  padding-left: 5px;
+  white-space: nowrap;
+}
+
+.report-title {
+  display: inline-block;
+  border: 0px solid lightgrey;
+  width: 75px;
+}
+
+.report-meta-data-long {
+  display: inline-block;
+  border: 0px solid lightgrey;
+  width: 400px;
+}
+
+.report-meta-data-short {
+  display: inline-block;
+  border: 0px solid lightgrey;
+  width: 100px;
+}
+
+.stack {
+  display: inline-block;
+  padding-left: 10px;
+  overflow-x: auto;
+  white-space: nowrap;
+  border-top: 1px solid lightgray;
+}
+
+.stackline {
+  padding: 1px;
+  white-space: nowrap;
+}
+
+.processeddate {
+
+}
