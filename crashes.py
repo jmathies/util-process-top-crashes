@@ -23,8 +23,14 @@ from datetime import datetime, timedelta
 # Usage
 ###########################################################
 # -u (url)   : json datafile url
-# -n (name)  : local json data filename excluding extension
+# -n (name)  : local json cache filename excluding extension
 # -d (name)  : html output filename excluding extension
+# python crashes.py -n nightly -d nightly -u https://sql.telemetry.mozilla.org/api/queries/78997/results.json?api_key=..
+
+### add a command line that controls the targeting graphics specific information for signature uniqueness. 
+## Jeff's hash thing
+## module name
+## move all the html to the template
 
 ###########################################################
 # Global consts
@@ -34,12 +40,10 @@ from datetime import datetime, timedelta
 SymbolServerUrl = "https://symbolication.stage.mozaws.net/symbolicate/v5"
 # Max stack depth for symbolication
 MaxStackDepth = 50
-# Text vs. html output switch
-DoHTML = True # Note, the non-html path is not maintained
 # Maximum number of raw crashes to process. This matches
 # the limit value of re:dash queries. Reduce for testing
 # purposes.
-CrashProcessMax = 3000
+CrashProcessMax = 5
 # Signature list length of the resulting top crashes report
 MostCommonLength = 50
 # When generating a report, signatures with crash counts
@@ -149,7 +153,7 @@ def processStack(frames):
     'RtlUserThreadStart'
     ]
 
-  markupStack = ''
+  dataStack = list() # [idx] = { 'frame': '(frame)', 'srcUrl': '(url)' }
   hashData = ''
 
   for frame in frames:
@@ -162,26 +166,27 @@ def processStack(frames):
       #print("TypeError while indexing frame.");
       continue
 
-    if not DoHTML:
-      markupStack += '      [' + str(frameIndex) + '] '
-    else:
-      markupStack += "<div class='stackline'>" + str(frameIndex) + '&nbsp;&nbsp;&nbsp;'
+    dataStack.insert(frameIndex, { 'index': frameIndex, 'frame': '', 'srcUrl': '', 'module': '' })
 
     functionCall = ''
     normalizedFunction = ''
+    module = ''
     skipFrame = False
+    frameCount = 0
     try:
       functionCall = frame['function']
       normalizedFunction = frame['normalized']
     except KeyError:
       #print("KeyError while indexing function.");
-      markupStack += "(missing function)</div>"
+      dataStack[frameIndex]['frame'] = "(missing function)"
       hashData += "(missing function)"
+      frameCount += 1
       continue
     except TypeError:
       print("TypeError while indexing function.");
-      markupStack += "(missing function)</div>"
+      dataStack[frameIndex]['frame'] = "(missing function)"
       hashData += "(missing function)"
+      frameCount += 1
       continue
 
     for k, v in coelesceFrameDict.items():
@@ -198,26 +203,37 @@ def processStack(frames):
         skipFrame = True
         break
 
+    try:
+      module = frame['module']
+    except:
+      pass
+
     srcUrl = generateSourceLink(frame)
 
-    if (len(srcUrl) > 0):
-      markupStack += escape(functionCall) + ' (<a href="' + srcUrl + '">' + 'src' + '</a>)</div>'
-    else:
-      markupStack += escape(functionCall) + '</div>'
+    dataStack[frameIndex]['srcUrl'] = srcUrl 
+    dataStack[frameIndex]['frame'] = functionCall
+    dataStack[frameIndex]['module'] = module
+
+    frameCount += 1
 
     if skipFrame is False:
       hashData += functionCall
 
-
-  # append meta data to our hashData so it applies to uniqueness
+  # Append any crash meta data to our hashData so it applies to uniqueness.
+  # Any variance in this data will cause this signature to be broken out as
+  # a separate signature in the final top crash list.
   hashData += operatingSystem
   hashData += operatingSystemVer
   hashData += compositor
+  # The template has filtering for arch, so this keeps x86 and x64 split up.
   hashData += arch
+  # The redash queries we are currently using target specific versions, so this
+  # doesn't have much of an impact except on beta, where we want to see the effect
+  # of beta fixes that get uplifted.
   hashData += firefoxVer
 
   hash = hashlib.md5(hashData.encode('utf-8')).hexdigest()
-  return hash, markupStack
+  return hash, dataStack
 
 # Cache a report to a local file under subfolder 'crashes'
 def cacheCrashes(reports):
@@ -497,138 +513,103 @@ if needsUpdate:
 signatureIndex = 0
 collection = sigCounter.most_common(MostCommonLength)
 
-if DoHTML is True:
-  templateFile = open("template.html", "r")
-  template = templateFile.read()
-  templateFile.close()
+templateFile = open("template.html", "r")
+template = templateFile.read()
+templateFile.close()
 
-  resultPage = ''
+resultPage = ''
 
-  # <!-- start of template -->
-  # <!-- end of template -->
-  sIndex = template.index('<!-- start of template -->')
-  eIndex = template.index('<!-- end of template -->')
-  header = template[0:sIndex]  
-  footer = template[eIndex:]  
-  template = template[sIndex:eIndex]
+# <!-- start of template -->
+# <!-- end of template -->
+sIndex = template.index('<!-- start of template -->')
+eIndex = template.index('<!-- end of template -->')
+header = template[0:sIndex]  
+footer = template[eIndex:]  
+template = template[sIndex:eIndex]
 
-  # <!-- start of signature template -->
-  # <!-- end of signature template -->
-  sIndex = template.index('<!-- start of signature template -->')
-  eIndex = template.index('<!-- end of signature template -->')
-  sigTemplate = template[sIndex:eIndex]
+# <!-- start of signature template -->
+# <!-- end of signature template -->
+sIndex = template.index('<!-- start of signature template -->')
+eIndex = template.index('<!-- end of signature template -->')
+sigTemplate = template[sIndex:eIndex]
 
-  # <!-- start of signature meta template -->
-  # <!-- end of signature meta template -->
-  sIndex = template.index('<!-- start of signature meta template -->')
-  eIndex = template.index('<!-- end of signature meta template -->')
-  sigMetaTemplate = template[sIndex:eIndex]
+# <!-- start of signature meta template -->
+# <!-- end of signature meta template -->
+sIndex = template.index('<!-- start of signature meta template -->')
+eIndex = template.index('<!-- end of signature meta template -->')
+sigMetaTemplate = template[sIndex:eIndex]
 
-  # <!-- start of report template -->
-  # <!-- end of report template -->
-  sIndex = template.index('<!-- start of report template -->')
-  eIndex = template.index('<!-- end of report template -->')
-  reportTemplate = template[sIndex:eIndex]
+# <!-- start of report template -->
+# <!-- end of report template -->
+sIndex = template.index('<!-- start of report template -->')
+eIndex = template.index('<!-- end of report template -->')
+reportTemplate = template[sIndex:eIndex]
 
-  resultFile = open(("%s.html" % outputFilename), "w")
-  resultFile.write(header)
+resultFile = open(("%s.html" % outputFilename), "w")
+resultFile.write(header)
 
-  for sig, crashcount in collection:
-    try:
-      sigRecord = reports[sig]
-    except KeyError:
-      resultFile.write("no stack data\n")
-      continue
+for sig, crashcount in collection:
+  try:
+    sigRecord = reports[sig]
+  except KeyError:
+    resultFile.write("no stack data\n")
+    continue
 
-    crashcount = len(sigRecord['reportList'])
-    percent = (crashcount / totalCrashesProcessed)*100.0
+  crashcount = len(sigRecord['reportList'])
+  percent = (crashcount / totalCrashesProcessed)*100.0
 
-    if crashcount < MinCrashCount: # Skip small crash count reports
-      continue
+  if crashcount < MinCrashCount: # Skip small crash count reports
+    continue
 
-    #print('%d reports, colcount = %d clientcount = %d' % (len(sigRecord['reportList']), crashcount, sigRecord['clientcount']))
+  #print('%d reports, colcount = %d clientcount = %d' % (len(sigRecord['reportList']), crashcount, sigRecord['clientcount']))
 
-    signatureIndex += 1
-    resultFile.write(Template(sigTemplate)
-                     .substitute(rank=signatureIndex, percent=("%.00f%%" % percent),
-                                 expandosig=('sig'+str(signatureIndex)), signature=(html.escape(sig)),
-                                 clientcount=sigRecord['clientcount'], count=crashcount))
+  signatureIndex += 1
+  resultFile.write(Template(sigTemplate)
+                    .substitute(rank=signatureIndex, percent=("%.00f%%" % percent),
+                                expandosig=('sig'+str(signatureIndex)), signature=(html.escape(sig)),
+                                clientcount=sigRecord['clientcount'], count=crashcount))
 
-    resultFile.write(Template(sigMetaTemplate)
-                      .substitute(expandosig=('sig'+str(signatureIndex)), os=sigRecord['opoerating_system'],
-                                  fxver=sigRecord['firefoxVer'], osver=sigRecord['os_version'],
-                                  arch=sigRecord['arch'], compositor=sigRecord['compositor']))
+  resultFile.write(Template(sigMetaTemplate)
+                    .substitute(expandosig=('sig'+str(signatureIndex)), os=sigRecord['opoerating_system'],
+                                fxver=sigRecord['firefoxVer'], osver=sigRecord['os_version'],
+                                arch=sigRecord['arch'], compositor=sigRecord['compositor']))
 
-    idx = 0
-    for report in reports[sig]['reportList']:
-      idx = idx + 1
-      if idx > MaxReportCount:
-        break
-      oombytes = report['oom_size'] if not None else '0'
-      resultFile.write(Template(reportTemplate)
-                       .substitute(expandostack=('st'+str(signatureIndex)+'-'+str(idx)), rindex=idx, type=report['type'],
-                                  oomsize=oombytes,
-                                  devvendor=report['devvendor'], devgen=report['devgen'],
-                                  devchipset=report['devchipset'],
-                                  stack=(report['stack'])))
+  idx = 0
+  for report in reports[sig]['reportList']:
+    idx = idx + 1
+    if idx > MaxReportCount:
+      break
+    oombytes = report['oom_size'] if not None else '0'
+
+    # Generate our html stack
+    markupStack = str()
+    for frameData in report['stack']:
+      # [idx] = { 'index': n, 'frame': '(frame)', 'srcUrl': '(url)', 'module': '(module)' }
+      frameIndex = frameData['index']
+      frame = frameData['frame']
+      srcUrl = frameData['srcUrl']
+      markupStack += "<div class='stackline'>" + str(frameIndex) + '&nbsp;&nbsp;&nbsp;'
+      if (len(srcUrl) > 0):
+        markupStack += escape(frame) + ' (<a href="' + srcUrl + '">' + 'src' + '</a>)</div>'
+      else:
+        markupStack += escape(frame) + '</div>'
+
+    resultFile.write(Template(reportTemplate)
+                      .substitute(expandostack=('st'+str(signatureIndex)+'-'+str(idx)), rindex=idx, type=report['type'],
+                                oomsize=oombytes,
+                                devvendor=report['devvendor'], devgen=report['devgen'],
+                                devchipset=report['devchipset'],
+                                stack=(markupStack)))
     
-    # Need to find a fix for this. Originally each template block was
-    # isolated, but to get hiding of the reports section working, I
-    # needed a div that spanned two blocked.
-    resultFile.write("</div>") # <!-- NOTE this orphaned div for the expando stuff! -->
+  # Need to find a fix for this. Originally each template block was
+  # isolated, but to get hiding of the signature section working, I
+  # needed a div that spanned the signature meta and reports html.
+  resultFile.write("</div>") # <!-- NOTE this orphaned div for the signature meta expandable section -->
 
-  # Add processed date to the footer
-  dateTime = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
-  resultFile.write(Template(footer).substitute(processeddate=dateTime))
-  resultFile.close()
+# Add processed date to the footer
+dateTime = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
+resultFile.write(Template(footer).substitute(processeddate=dateTime))
+resultFile.close()
 
 # Caching of reports
-cacheReports(reports)
-
-
-
-if DoHTML is False:
-  # Not maintained
-  reportCount = 0
-  crashCount = 0
-
-  resultFile = open("output.txt", "w")
-  for sig, count in collection:
-
-    resultFile.write("=====================================================================================================================\n")
-    resultFile.write("%01d:  \'%s\'  crashes:%d\n" % (signatureIndex, sig, count))
-    resultFile.write("=====================================================================================================================\n")
-
-    signatureIndex += 1
-
-    # pp.pprint(reports[sig]) contains hashList and reportList
-
-    try:
-      sigRecord = reports[sig]
-    except KeyError:
-      resultFile.write("no stack data\n")
-      continue
-
-    idx = 0
-    for report in reports[sig]['reportList']:
-      idx = idx + 1
-      output = ''
-      # signature and signature meta data
-      output += 'report: #%d' % (idx)
-      output += '  %s' % (report['type'])
-      output += '  %s %s (%s)' % (sigRecord['opoerating_system'], sigRecord['os_version'], sigRecord['arch'])
-
-      oombytes = report['oom_size'] if not None else '0'
-      output += '  %s  oom_size:%s\n' % (sigRecord['compositor'], str(oombytes))
-
-      output += report['stack']
-      resultFile.write(output + '\n')
-
-    crashCount += count
-    reportCount += len(reports[sig]['reportList'])
-
-  print('Total Crashes: %d Total Stacks: %d Total Reports: %d' % (crashCount, len(reports), reportCount))
-  resultFile.close()
-
-
- 
+cacheReports(reports) 
