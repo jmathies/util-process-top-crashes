@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3
+#!/usr/bin/env python3
 
 import json
 import hashlib
@@ -612,4 +612,52 @@ resultFile.write(Template(footer).substitute(processeddate=dateTime))
 resultFile.close()
 
 # Caching of reports
-cacheReports(reports) 
+cacheReports(reports)
+
+
+
+if DoHTML is False:
+  # Not maintained
+  reportCount = 0
+  crashCount = 0
+
+  resultFile = open("output.txt", "w")
+  for sig, count in collection:
+
+    resultFile.write("=====================================================================================================================\n")
+    resultFile.write("%01d:  \'%s\'  crashes:%d\n" % (signatureIndex, sig, count))
+    resultFile.write("=====================================================================================================================\n")
+
+    signatureIndex += 1
+
+    # pp.pprint(reports[sig]) contains hashList and reportList
+
+    try:
+      sigRecord = reports[sig]
+    except KeyError:
+      resultFile.write("no stack data\n")
+      continue
+
+    idx = 0
+    for report in reports[sig]['reportList']:
+      idx = idx + 1
+      output = ''
+      # signature and signature meta data
+      output += 'report: #%d' % (idx)
+      output += '  %s' % (report['type'])
+      output += '  %s %s (%s)' % (sigRecord['opoerating_system'], sigRecord['os_version'], sigRecord['arch'])
+
+      oombytes = report['oom_size'] if not None else '0'
+      output += '  %s  oom_size:%s\n' % (sigRecord['compositor'], str(oombytes))
+
+      output += report['stack']
+      resultFile.write(output + '\n')
+
+    crashCount += count
+    reportCount += len(reports[sig]['reportList'])
+
+  print('Total Crashes: %d Total Stacks: %d Total Reports: %d' % (crashCount, len(reports), reportCount))
+  resultFile.close()
+
+
+ 
