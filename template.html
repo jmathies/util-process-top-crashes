@@ -49,6 +49,7 @@
     }
   </script>
 
+  <!-- start of crash template -->
   <div id="mainlist">
     <div id="options">
       <div class="filterbutton" onclick="return filter(this, 'oom');">OOM</div>
@@ -67,7 +68,6 @@
       <div id="hdr-count">count</div>
     </div>
 
-    <!-- start of template -->
     <!-- start of signature template -->
     <div class="signature" onclick="return expandElement('$expandosig');" id="a$expandosig">
       <div id="hdr-rank">$rank</div>
@@ -76,7 +76,6 @@
       <div id="hdr-clientcount">$clientcount</div>
       <div id="hdr-count">$count</div>
     </div>
-    <!-- end of signature template -->
     <!-- start of signature meta template -->
     <div style="display:none;" id="$expandosig">
       <div class="signature-meta" onclick="return expandElement('$expandosig');">
@@ -95,10 +94,8 @@
           <div class="report-meta-data-long">Generation / Chipset</div>
         </div>
       </div>
-      <!-- end of signature meta template -->
       <!-- start of report template -->
       <div class="report">
-        <!-- meta data per report -->
         <div class="report-meta" onclick="return expandElement('$expandostack');">
           <div class="report-title">$rindex</div>
           <div class="report-meta-data-long">$type</div>
@@ -106,12 +103,20 @@
           <div class="report-meta-data-short">$devvendor</div>
           <div class="report-meta-data-long">$devgen / $devchipset</div>
         </div>
-        <div class="stack" style="display:none;" id="$expandostack" );">$stack</div>
+        <div class="stack" style="display:none;" id="$expandostack">
+          <!-- start of stackline template -->
+          <div class='stackline'>
+            <div class="frame-index">$frameindex</div><div class="src-link"><a style="display:$style;" href="$srcurl">src</a></div><div class="stack-frame">$frame</div>
+          </div>
+          <!-- end of stackline template -->
+        </div>
       </div>
       <!-- end of report template -->
-    </div> <!-- NOTE this orphaned div for the signature data expando stuff! -->
-    <!-- end of template -->
+    </div>
+    <!-- end of signature meta template -->
+    <!-- end of signature template -->
   </div>
+  <!-- end of crash template -->
   <div class="processeddate">$processeddate</div>
 </body>
 </html>

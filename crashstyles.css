@@ -162,6 +162,19 @@
   white-space: nowrap;
 }
 
-.processeddate {
+.frame-index {
+  display: inline-block;
+  min-width:18px;
+}
 
+.src-link {
+  display: inline-block;
+  min-width: 25px;
+}
+
+.stack-frame {
+  display: inline-block;
+}
+
+.processeddate {
 }

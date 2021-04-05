@@ -31,6 +31,9 @@ from datetime import datetime, timedelta
 ## Jeff's hash thing
 ## module name
 ## move all the html to the template
+## graphing over time
+##   - it'd be neat to separately graph minor build versions so we can see
+#      changes in cases like beta builds and across point releases
 
 ###########################################################
 # Global consts
@@ -43,7 +46,7 @@ MaxStackDepth = 50
 # Maximum number of raw crashes to process. This matches
 # the limit value of re:dash queries. Reduce for testing
 # purposes.
-CrashProcessMax = 5
+CrashProcessMax = 2000
 # Signature list length of the resulting top crashes report
 MostCommonLength = 50
 # When generating a report, signatures with crash counts
@@ -172,7 +175,6 @@ def processStack(frames):
     normalizedFunction = ''
     module = ''
     skipFrame = False
-    frameCount = 0
     try:
       functionCall = frame['function']
       normalizedFunction = frame['normalized']
@@ -180,13 +182,11 @@ def processStack(frames):
       #print("KeyError while indexing function.");
       dataStack[frameIndex]['frame'] = "(missing function)"
       hashData += "(missing function)"
-      frameCount += 1
       continue
     except TypeError:
       print("TypeError while indexing function.");
       dataStack[frameIndex]['frame'] = "(missing function)"
       hashData += "(missing function)"
-      frameCount += 1
       continue
 
     for k, v in coelesceFrameDict.items():
@@ -213,8 +213,6 @@ def processStack(frames):
     dataStack[frameIndex]['srcUrl'] = srcUrl 
     dataStack[frameIndex]['frame'] = functionCall
     dataStack[frameIndex]['module'] = module
-
-    frameCount += 1
 
     if skipFrame is False:
       hashData += functionCall
@@ -305,6 +303,54 @@ def purgeOldReports(reports):
   for sig in delSigList:
     del reports[sig]
   print("Removed %d older signatures from our database." % len(delSigList))
+
+def extractTemplate(token, srcTemplate):
+  # This returns the inner template from srcTemplate, minus any
+  # identifying tag data.
+
+  # token would be something like 'signature' used
+  # in identifying tags like:
+  # <!-- start of signature template -->
+  # <!-- end of signature template -->
+  start = '<!-- start of ' + token + ' template -->'
+  end = '<!-- end of ' + token + ' template -->'
+  sIndex = srcTemplate.index(start)
+  eIndex = srcTemplate.index(end)
+  if sIndex == -1 or eIndex == -1:
+    raise Exception("Bad HTML template tokens!") 
+  template = srcTemplate[sIndex + len(start) : eIndex + len(end)]
+  return template
+
+def extractAndTokenizeTemplate(token, srcTemplate, insertToken):
+  # This returns the inner template from srcTemplate, minus any
+  # identifying tag data, and we also return srcTemplate with
+  # $insertToken replacing the block we clipped out.
+
+  start = '<!-- start of ' + token + ' template -->'
+  end = '<!-- end of ' + token + ' template -->'
+  sIndex = srcTemplate.index(start)
+  eIndex = srcTemplate.index(end)
+  if sIndex == -1 or eIndex == -1:
+    raise Exception("Bad HTML template tokens!") 
+  header = srcTemplate[0:sIndex]
+  footer = srcTemplate[eIndex + len(end):]
+  template = srcTemplate[sIndex + len(start) : eIndex]
+  return template, (header + '$' + insertToken + footer)
+
+def dumpTemplates():
+  print('mainPage -----')
+  print(mainPage)
+  print('outerSigTemplate-----')
+  print(outerSigTemplate)
+  print('outerSigMetaTemplate-----')
+  print(outerSigMetaTemplate)
+  print('outerReportTemplate-----')
+  print(outerReportTemplate)
+  print('outerStackTemplate-----')
+  print(outerStackTemplate)
+  print('innerStackTemplate-----')
+  print(innerStackTemplate)
+  exit()
 
 ###########################################################
 # Process crashes and stacks
@@ -510,49 +556,50 @@ if needsUpdate:
 ### HTML generation
 ###########################################################
 
-signatureIndex = 0
-collection = sigCounter.most_common(MostCommonLength)
-
 templateFile = open("template.html", "r")
 template = templateFile.read()
 templateFile.close()
 
-resultPage = ''
-
-# <!-- start of template -->
-# <!-- end of template -->
-sIndex = template.index('<!-- start of template -->')
-eIndex = template.index('<!-- end of template -->')
-header = template[0:sIndex]  
-footer = template[eIndex:]  
-template = template[sIndex:eIndex]
+# <!-- start of crash template -->
+# <!-- end of crash template -->
+innerTemplate, mainPage = extractAndTokenizeTemplate('crash', template, 'main')
 
 # <!-- start of signature template -->
 # <!-- end of signature template -->
-sIndex = template.index('<!-- start of signature template -->')
-eIndex = template.index('<!-- end of signature template -->')
-sigTemplate = template[sIndex:eIndex]
+innerSigTemplate, outerSigTemplate = extractAndTokenizeTemplate('signature', innerTemplate, 'signature')
 
+# Main inner block
 # <!-- start of signature meta template -->
 # <!-- end of signature meta template -->
-sIndex = template.index('<!-- start of signature meta template -->')
-eIndex = template.index('<!-- end of signature meta template -->')
-sigMetaTemplate = template[sIndex:eIndex]
+innerSigMetaTemplate, outerSigMetaTemplate = extractAndTokenizeTemplate('signature meta', innerSigTemplate, 'reports')
 
+# Report meta plus stack info
 # <!-- start of report template -->
 # <!-- end of report template -->
-sIndex = template.index('<!-- start of report template -->')
-eIndex = template.index('<!-- end of report template -->')
-reportTemplate = template[sIndex:eIndex]
+innerReportTemplate, outerReportTemplate = extractAndTokenizeTemplate('report', innerSigMetaTemplate, 'report')
+
+# <!-- start of stackline template -->
+# <!-- end of stackline template -->
+innerStackTemplate, outerStackTemplate = extractAndTokenizeTemplate('stackline', innerReportTemplate, 'stackline')
+
+outerStackTemplate = outerStackTemplate.strip()
+innerStackTemplate = innerStackTemplate.strip()
+outerReportTemplate = outerReportTemplate.strip()
+outerSigMetaTemplate = outerSigMetaTemplate.strip()
+outerSigTemplate = outerSigTemplate.strip()
 
 resultFile = open(("%s.html" % outputFilename), "w")
-resultFile.write(header)
+
+signatureHtml = str()
+sigMetaHtml = str()
+signatureIndex = 0
+
+collection = sigCounter.most_common(MostCommonLength)
 
 for sig, crashcount in collection:
   try:
     sigRecord = reports[sig]
   except KeyError:
-    resultFile.write("no stack data\n")
     continue
 
   crashcount = len(sigRecord['reportList'])
@@ -561,19 +608,8 @@ for sig, crashcount in collection:
   if crashcount < MinCrashCount: # Skip small crash count reports
     continue
 
-  #print('%d reports, colcount = %d clientcount = %d' % (len(sigRecord['reportList']), crashcount, sigRecord['clientcount']))
-
   signatureIndex += 1
-  resultFile.write(Template(sigTemplate)
-                    .substitute(rank=signatureIndex, percent=("%.00f%%" % percent),
-                                expandosig=('sig'+str(signatureIndex)), signature=(html.escape(sig)),
-                                clientcount=sigRecord['clientcount'], count=crashcount))
-
-  resultFile.write(Template(sigMetaTemplate)
-                    .substitute(expandosig=('sig'+str(signatureIndex)), os=sigRecord['opoerating_system'],
-                                fxver=sigRecord['firefoxVer'], osver=sigRecord['os_version'],
-                                arch=sigRecord['arch'], compositor=sigRecord['compositor']))
-
+  reportHtml = str()
   idx = 0
   for report in reports[sig]['reportList']:
     idx = idx + 1
@@ -581,83 +617,53 @@ for sig, crashcount in collection:
       break
     oombytes = report['oom_size'] if not None else '0'
 
-    # Generate our html stack
-    markupStack = str()
+    stackHtml = str()
     for frameData in report['stack']:
       # [idx] = { 'index': n, 'frame': '(frame)', 'srcUrl': '(url)', 'module': '(module)' }
       frameIndex = frameData['index']
       frame = frameData['frame']
       srcUrl = frameData['srcUrl']
-      markupStack += "<div class='stackline'>" + str(frameIndex) + '&nbsp;&nbsp;&nbsp;'
       if (len(srcUrl) > 0):
-        markupStack += escape(frame) + ' (<a href="' + srcUrl + '">' + 'src' + '</a>)</div>'
+        stackHtml += Template(innerStackTemplate).substitute(frameindex=frameIndex,
+                                                             frame=escape(frame),
+                                                             srcurl=srcUrl,
+                                                             style='inline-block')
       else:
-        markupStack += escape(frame) + '</div>'
+        stackHtml += Template(innerStackTemplate).substitute(frameindex=frameIndex,
+                                                             frame=escape(frame),
+                                                             srcurl='',
+                                                             style='none')
 
-    resultFile.write(Template(reportTemplate)
-                      .substitute(expandostack=('st'+str(signatureIndex)+'-'+str(idx)), rindex=idx, type=report['type'],
-                                oomsize=oombytes,
-                                devvendor=report['devvendor'], devgen=report['devgen'],
-                                devchipset=report['devchipset'],
-                                stack=(markupStack)))
-    
-  # Need to find a fix for this. Originally each template block was
-  # isolated, but to get hiding of the signature section working, I
-  # needed a div that spanned the signature meta and reports html.
-  resultFile.write("</div>") # <!-- NOTE this orphaned div for the signature meta expandable section -->
+    reportHtml += Template(outerStackTemplate).substitute(expandostack=('st'+str(signatureIndex)+'-'+str(idx)),
+                                                          rindex=idx, type=report['type'],
+                                                          oomsize=oombytes,
+                                                          devvendor=report['devvendor'],
+                                                          devgen=report['devgen'],
+                                                          devchipset=report['devchipset'],
+                                                          stackline=stackHtml)
+
+  sigHtml = Template(outerReportTemplate).substitute(expandosig=('sig'+str(signatureIndex)),
+                                                     os=sigRecord['opoerating_system'],
+                                                     fxver=sigRecord['firefoxVer'],
+                                                     osver=sigRecord['os_version'],
+                                                     arch=sigRecord['arch'],
+                                                     compositor=sigRecord['compositor'],
+                                                     report=reportHtml)
+
+  sigMetaHtml += Template(outerSigMetaTemplate).substitute(rank=signatureIndex,
+                                                           percent=("%.00f%%" % percent),
+                                                           expandosig=('sig'+str(signatureIndex)),
+                                                           signature=(html.escape(sig)),
+                                                           clientcount=sigRecord['clientcount'],
+                                                           count=crashcount,
+                                                           reports=sigHtml)
+
+signatureHtml += Template(outerSigTemplate).substitute(signature=sigMetaHtml)
 
 # Add processed date to the footer
 dateTime = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
-resultFile.write(Template(footer).substitute(processeddate=dateTime))
+resultFile.write(Template(mainPage).substitute(main=signatureHtml, processeddate=dateTime))
 resultFile.close()
 
 # Caching of reports
 cacheReports(reports)
-
-
-
-if DoHTML is False:
-  # Not maintained
-  reportCount = 0
-  crashCount = 0
-
-  resultFile = open("output.txt", "w")
-  for sig, count in collection:
-
-    resultFile.write("=====================================================================================================================\n")
-    resultFile.write("%01d:  \'%s\'  crashes:%d\n" % (signatureIndex, sig, count))
-    resultFile.write("=====================================================================================================================\n")
-
-    signatureIndex += 1
-
-    # pp.pprint(reports[sig]) contains hashList and reportList
-
-    try:
-      sigRecord = reports[sig]
-    except KeyError:
-      resultFile.write("no stack data\n")
-      continue
-
-    idx = 0
-    for report in reports[sig]['reportList']:
-      idx = idx + 1
-      output = ''
-      # signature and signature meta data
-      output += 'report: #%d' % (idx)
-      output += '  %s' % (report['type'])
-      output += '  %s %s (%s)' % (sigRecord['opoerating_system'], sigRecord['os_version'], sigRecord['arch'])
-
-      oombytes = report['oom_size'] if not None else '0'
-      output += '  %s  oom_size:%s\n' % (sigRecord['compositor'], str(oombytes))
-
-      output += report['stack']
-      resultFile.write(output + '\n')
-
-    crashCount += count
-    reportCount += len(reports[sig]['reportList'])
-
-  print('Total Crashes: %d Total Stacks: %d Total Reports: %d' % (crashCount, len(reports), reportCount))
-  resultFile.close()
-
-
- 
