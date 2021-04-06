@@ -83,30 +83,31 @@
         <div class="meta-title">Firefox Version</div><div class="meta-data">$fxver</div><br />
         <div class="meta-title">Version</div><div class="meta-data">$osver</div><br />
         <div class="meta-title">Arch</div><div class="meta-data">$arch</div><br />
-        <div class="meta-title">Compositor</div><div class="meta-data">$compositor</div>
       </div>
       <div class="report">
         <div class="report-header">
           <div class="report-title">Report</div>
-          <div class="report-meta-data-long">Type</div>
+          <div class="report-meta-data-long">Compositor</div>
           <div class="report-meta-data-short">OOM Size</div>
           <div class="report-meta-data-short">Vendor</div>
           <div class="report-meta-data-long">Generation / Chipset</div>
+          <div class="report-meta-data-long">Type</div>
         </div>
       </div>
       <!-- start of report template -->
       <div class="report">
         <div class="report-meta" onclick="return expandElement('$expandostack');">
           <div class="report-title">$rindex</div>
-          <div class="report-meta-data-long">$type</div>
+          <div class="report-meta-data-long">$compositor</div>
           <div class="report-meta-data-short">$oomsize</div>
           <div class="report-meta-data-short">$devvendor</div>
           <div class="report-meta-data-long">$devgen / $devchipset</div>
+          <div class="report-meta-data-long">$type</div>
         </div>
         <div class="stack" style="display:none;" id="$expandostack">
           <!-- start of stackline template -->
           <div class='stackline'>
-            <div class="frame-index">$frameindex</div><div class="src-link"><a style="display:$style;" href="$srcurl">src</a></div><div class="stack-frame">$frame</div>
+            <div class="frame-index">$frameindex</div><div class="src-link"><a style="display:$style;" href="$srcurl">src</a></div><div class="module-name">$module</div><div class="stack-frame">$frame</div>
           </div>
           <!-- end of stackline template -->
         </div>

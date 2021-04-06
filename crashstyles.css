@@ -140,7 +140,7 @@
 .report-meta-data-long {
   display: inline-block;
   border: 0px solid lightgrey;
-  width: 400px;
+  width: 200px;
 }
 
 .report-meta-data-short {
@@ -164,16 +164,25 @@
 
 .frame-index {
   display: inline-block;
+  white-space: nowrap;
   min-width:18px;
 }
 
 .src-link {
   display: inline-block;
+  white-space: nowrap;
   min-width: 25px;
+}
+
+.module-name {
+  display: inline-block;
+  white-space: nowrap;
+  min-width: 100px;
 }
 
 .stack-frame {
   display: inline-block;
+  white-space: nowrap;
 }
 
 .processeddate {

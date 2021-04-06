@@ -25,12 +25,10 @@ from datetime import datetime, timedelta
 # -u (url)   : json datafile url
 # -n (name)  : local json cache filename excluding extension
 # -d (name)  : html output filename excluding extension
+# -c (count) : number of reports to process, overrides the default
 # python crashes.py -n nightly -d nightly -u https://sql.telemetry.mozilla.org/api/queries/78997/results.json?api_key=..
 
-### add a command line that controls the targeting graphics specific information for signature uniqueness. 
 ## Jeff's hash thing
-## module name
-## move all the html to the template
 ## graphing over time
 ##   - it'd be neat to separately graph minor build versions so we can see
 #      changes in cases like beta builds and across point releases
@@ -222,7 +220,7 @@ def processStack(frames):
   # a separate signature in the final top crash list.
   hashData += operatingSystem
   hashData += operatingSystemVer
-  hashData += compositor
+  # hashData += compositor
   # The template has filtering for arch, so this keeps x86 and x64 split up.
   hashData += arch
   # The redash queries we are currently using target specific versions, so this
@@ -358,7 +356,7 @@ def dumpTemplates():
 
 # u = redash json data source (url), n = output html path and filename, d = database path and filename
 # python crashes.py -n output -d crashreports
-options, remainder = getopt.getopt(sys.argv[1:], 'u:n:d:')
+options, remainder = getopt.getopt(sys.argv[1:], 'u:n:d:c:')
 for o, a in options:
   if o == '-u':
     jsonUrl = a
@@ -369,7 +367,11 @@ for o, a in options:
   elif o == '-d':
     dbFilename = a
     print("local cache file: %s.json" %  dbFilename)
+  elif o == '-c':
+    CrashProcessMax = int(a)
     
+print("processing %d reports" % CrashProcessMax)
+
 sigCounter = Counter()
 
 props = list()
@@ -393,7 +395,6 @@ if  crashesToProcess > CrashProcessMax:
   crashesToProcess = CrashProcessMax
 
 for recrow in dataset["query_result"]["data"]["rows"]:
-
   if totalCrashesProcessed == CrashProcessMax:
     break
 
@@ -623,15 +624,18 @@ for sig, crashcount in collection:
       frameIndex = frameData['index']
       frame = frameData['frame']
       srcUrl = frameData['srcUrl']
+      moduleName = frameData['module']
       if (len(srcUrl) > 0):
         stackHtml += Template(innerStackTemplate).substitute(frameindex=frameIndex,
                                                              frame=escape(frame),
                                                              srcurl=srcUrl,
+                                                             module=moduleName,
                                                              style='inline-block')
       else:
         stackHtml += Template(innerStackTemplate).substitute(frameindex=frameIndex,
                                                              frame=escape(frame),
                                                              srcurl='',
+                                                             module=moduleName,
                                                              style='none')
 
     reportHtml += Template(outerStackTemplate).substitute(expandostack=('st'+str(signatureIndex)+'-'+str(idx)),
@@ -640,6 +644,7 @@ for sig, crashcount in collection:
                                                           devvendor=report['devvendor'],
                                                           devgen=report['devgen'],
                                                           devchipset=report['devchipset'],
+                                                          compositor=sigRecord['compositor'],
                                                           stackline=stackHtml)
 
   sigHtml = Template(outerReportTemplate).substitute(expandosig=('sig'+str(signatureIndex)),
@@ -647,7 +652,6 @@ for sig, crashcount in collection:
                                                      fxver=sigRecord['firefoxVer'],
                                                      osver=sigRecord['os_version'],
                                                      arch=sigRecord['arch'],
-                                                     compositor=sigRecord['compositor'],
                                                      report=reportHtml)
 
   sigMetaHtml += Template(outerSigMetaTemplate).substitute(rank=signatureIndex,
