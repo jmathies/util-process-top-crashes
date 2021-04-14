@@ -8,13 +8,20 @@ import re
 import sys
 import html
 import getopt
-import fx_crash_sig
+import sys
+import threading
+import itertools
+import time
+import requests
 
 from string import Template
-from fx_crash_sig.crash_processor import CrashProcessor
 from collections import Counter
 from urllib.request import urlopen
+from urllib import request
 from datetime import datetime, timedelta
+
+import fx_crash_sig
+from fx_crash_sig.crash_processor import CrashProcessor
 
 # process types
 # https://searchfox.org/mozilla-central/source/toolkit/components/crashes/CrashManager.jsm#162
@@ -22,16 +29,19 @@ from datetime import datetime, timedelta
 ###########################################################
 # Usage
 ###########################################################
-# -u (url)   : json datafile url
-# -n (name)  : local json cache filename excluding extension
-# -d (name)  : html output filename excluding extension
-# -c (count) : number of reports to process, overrides the default
-# python crashes.py -n nightly -d nightly -u https://sql.telemetry.mozilla.org/api/queries/78997/results.json?api_key=..
+# -u (url)      : redash rest endpoint url
+# -k (str)      : redash user api key
+# -q (query id) : redash api query id
+# -n (name)     : local json cache filename to use (excluding extension)
+# -d (name)     : local html output filename to use (excluding extension)
+# -c (count)    : number of reports to process, overrides the default
+# -p (k=v)      : k=v redash query parameters to pass to the query request.
+# python crashes.py -n nightly -d nightly -u https://sql.telemetry.mozilla.org -k (userapikey) -q 79354 -p process_type=gpu -p version=89 -p channel=nightly
 
-## Jeff's hash thing
-## graphing over time
-##   - it'd be neat to separately graph minor build versions so we can see
-#      changes in cases like beta builds and across point releases
+## crashstats proto signature search
+## bugzilla search
+## rudimentary annotation support through a static json file
+## driver version and device id
 
 ###########################################################
 # Global consts
@@ -44,7 +54,7 @@ MaxStackDepth = 50
 # Maximum number of raw crashes to process. This matches
 # the limit value of re:dash queries. Reduce for testing
 # purposes.
-CrashProcessMax = 2000
+CrashProcessMax = 5000
 # Signature list length of the resulting top crashes report
 MostCommonLength = 50
 # When generating a report, signatures with crash counts
@@ -84,55 +94,146 @@ def generateSignature(payload):
     return ""
 
 def progress(count, total, status=''):
-    bar_len = 60
-    filled_len = int(round(bar_len * count / float(total)))
+  bar_len = 60
+  filled_len = int(round(bar_len * count / float(total)))
 
-    percents = round(100.0 * count / float(total), 1)
-    bar = '=' * filled_len + '-' * (bar_len - filled_len)
+  percents = round(100.0 * count / float(total), 1)
+  bar = '=' * filled_len + '-' * (bar_len - filled_len)
 
-    sys.stdout.write('[%s] %s%s ...%s\r' % (bar, percents, '%', status))
-    sys.stdout.flush()
+  sys.stdout.write('[%s] %s%s ...%s\r' % (bar, percents, '%', status))
+  sys.stdout.flush()
+
+class Spinner:
+  def __init__(self, message, delay=0.1):
+    self.spinner = itertools.cycle(['-', '/', '|', '\\'])
+    self.delay = delay
+    self.busy = False
+    self.spinner_visible = False
+    sys.stdout.write(message)
+
+  def write_next(self):
+    with self._screen_lock:
+      if not self.spinner_visible:
+        sys.stdout.write(next(self.spinner))
+        self.spinner_visible = True
+        sys.stdout.flush()
+
+  def remove_spinner(self, cleanup=False):
+    with self._screen_lock:
+      if self.spinner_visible:
+        sys.stdout.write('\b')
+        self.spinner_visible = False
+        if cleanup:
+          sys.stdout.write(' ')       # overwrite spinner with blank
+          sys.stdout.write('\r')      # move to next line
+        sys.stdout.flush()
+
+  def spinner_task(self):
+    while self.busy:
+      self.write_next()
+      time.sleep(self.delay)
+      self.remove_spinner()
+
+  def __enter__(self):
+    if sys.stdout.isatty():
+      self._screen_lock = threading.Lock()
+      self.busy = True
+      self.thread = threading.Thread(target=self.spinner_task)
+      self.thread.start()
+
+  def __exit__(self, exception, value, tb):
+    if sys.stdout.isatty():
+      self.busy = False
+      self.remove_spinner(cleanup=True)
+    else:
+      sys.stdout.write('\r')
+
+def poll_job(s, redash_url, job):
+  while job['status'] not in (3,4):
+      response = s.get('{}/api/jobs/{}'.format(redash_url, job['id']))
+      job = response.json()['job']
+      time.sleep(1)
+
+  if job['status'] == 3:
+      return job['query_result_id']
+    
+  return None
+
+def getchRedashQueryResult(redash_url, query_id, api_key, params):
+  s = requests.Session()
+  s.headers.update({'Authorization': 'Key {}'.format(api_key)})
+
+  #payload = dict(max_age=0, parameters=params) force a refresh vs. use the cached value
+  payload = dict(parameters=params)
+
+  url = "%s/api/queries/%s/results" % (redash_url, query_id)
+  response = s.post(url, data=json.dumps(payload))
+
+  if response.status_code != 200:
+      raise Exception('Redash query failed.')
+
+  #{ 'job': { 'error': '',
+  #           'id': '21429857-5fd0-443d-ba4b-fb9cc6d49add',
+  #           'query_result_id': None,
+  #           'result': None,
+  #           'status': 1,
+  #           'updated_at': 0}}
+  # ...or, we just get back the result
+
+  try:
+    result = response.json()['job']
+  except KeyError:
+    return response.json()
+
+  result_id = poll_job(s, redash_url, response.json()['job'])
+
+  response = s.get('{}/api/queries/{}/results/{}.json'.format(redash_url, query_id, result_id))
+
+  if response.status_code != 200:
+      raise Exception('Failed getting results.')
+
+  return response.json()
 
 def generateSourceLink(frame):
-    # examples:
-    # https://hg.mozilla.org/mozilla-central/file/2da6d806f45732e169fd8e7ea9a9761fa7fed93d/netwerk/protocol/http/OpaqueResponseUtils.cpp#l208
-    # https://crash-stats.mozilla.org/sources/highlight/?url=https://gecko-generated-sources.s3.amazonaws.com/7d3f7c890af...e97be06f948921153/ipc/ipdl/PCompositorManagerParent.cpp&line=200#L-200
-    # 'file': 's3:gecko-generated-sources:8276fd848664bea270...8e363bdbc972cdb7eb661c4043de93ce27810b54/ipc/ipdl/PWebGLParent.cpp:',
-    # 'file': 'hg:hg.mozilla.org/mozilla-central:dom/canvas/WebGLParent.cpp:52d2c9e672d0a0c50af4d6c93cc0239b9e751d18',
-    # 'line': 59,
-    srcLineNumer = str()
-    srcfileData = str()
-    srcUrl = str()
-    try:
-      srcLineNumber = frame['line']
-      srcfileData = frame['file']
-      tokenList = srcfileData.split(':')
-      if (len(tokenList) != 4):
-        print("bad token list " + tokenList)
-        return str()
-    except:
+  # examples:
+  # https://hg.mozilla.org/mozilla-central/file/2da6d806f45732e169fd8e7ea9a9761fa7fed93d/netwerk/protocol/http/OpaqueResponseUtils.cpp#l208
+  # https://crash-stats.mozilla.org/sources/highlight/?url=https://gecko-generated-sources.s3.amazonaws.com/7d3f7c890af...e97be06f948921153/ipc/ipdl/PCompositorManagerParent.cpp&line=200#L-200
+  # 'file': 's3:gecko-generated-sources:8276fd848664bea270...8e363bdbc972cdb7eb661c4043de93ce27810b54/ipc/ipdl/PWebGLParent.cpp:',
+  # 'file': 'hg:hg.mozilla.org/mozilla-central:dom/canvas/WebGLParent.cpp:52d2c9e672d0a0c50af4d6c93cc0239b9e751d18',
+  # 'line': 59,
+  srcLineNumer = str()
+  srcfileData = str()
+  srcUrl = str()
+  try:
+    srcLineNumber = frame['line']
+    srcfileData = frame['file']
+    tokenList = srcfileData.split(':')
+    if (len(tokenList) != 4):
+      print("bad token list " + tokenList)
       return str()
+  except:
+    return str()
 
-    if tokenList[0].find('s3') == 0:
-      srcUrl = 'https://crash-stats.mozilla.org/sources/highlight/?url=https://gecko-generated-sources.s3.amazonaws.com/'
-      srcUrl += tokenList[2]
-      srcUrl += '&line='
-      srcUrl += str(srcLineNumber)
-      srcUrl += '#L-'
-      srcUrl += str(srcLineNumber)
-    elif tokenList[0].find('hg') == 0:
-      srcUrl = 'https://'
-      srcUrl += tokenList[1]
-      srcUrl += '/file/'
-      srcUrl += tokenList[3]
-      srcUrl += '/'
-      srcUrl += tokenList[2]
-      srcUrl += '#l' + str(srcLineNumber)
-    else:
-      #print("Unknown src annoutation source") this happens a lot
-      return str()
+  if tokenList[0].find('s3') == 0:
+    srcUrl = 'https://crash-stats.mozilla.org/sources/highlight/?url=https://gecko-generated-sources.s3.amazonaws.com/'
+    srcUrl += tokenList[2]
+    srcUrl += '&line='
+    srcUrl += str(srcLineNumber)
+    srcUrl += '#L-'
+    srcUrl += str(srcLineNumber)
+  elif tokenList[0].find('hg') == 0:
+    srcUrl = 'https://'
+    srcUrl += tokenList[1]
+    srcUrl += '/file/'
+    srcUrl += tokenList[3]
+    srcUrl += '/'
+    srcUrl += tokenList[2]
+    srcUrl += '#l' + str(srcLineNumber)
+  else:
+    #print("Unknown src annoutation source") this happens a lot
+    return str()
 
-    return srcUrl
+  return srcUrl
 
 def processStack(frames):
   # Normalized function names we can consider the same in calculating
@@ -354,9 +455,11 @@ def dumpTemplates():
 # Process crashes and stacks
 ###########################################################
 
-# u = redash json data source (url), n = output html path and filename, d = database path and filename
-# python crashes.py -n output -d crashreports
-options, remainder = getopt.getopt(sys.argv[1:], 'u:n:d:c:')
+queryId = ''
+userKey = ''
+parameters = dict()
+
+options, remainder = getopt.getopt(sys.argv[1:], 'u:n:d:c:k:q:p:')
 for o, a in options:
   if o == '-u':
     jsonUrl = a
@@ -369,10 +472,24 @@ for o, a in options:
     print("local cache file: %s.json" %  dbFilename)
   elif o == '-c':
     CrashProcessMax = int(a)
-    
-print("processing %d reports" % CrashProcessMax)
+  elif o == '-q':
+    queryId = a
+    print("query id: %s" %  queryId)
+  elif o == '-k':
+    userKey = a
+    print("user key: %s" %  userKey)
+  elif o == '-p':
+    param = a.split('=')
+    parameters[param[0]] = param[1]
 
-sigCounter = Counter()
+if len(userKey) == 0:
+  print("missing user api key.")
+  exit()
+elif len(queryId) == 0:
+  print("missing query id.")
+  exit()
+
+print("processing %d reports" % CrashProcessMax)
 
 props = list()
 reports = dict()
@@ -386,8 +503,9 @@ if LoadLocally:
   with open(LocalJsonFile) as f:
     dataset = json.load(f)
 else:
-  print("loading json...")
-  dataset = json.loads(urlopen(jsonUrl).read().decode("utf-8"))
+  with Spinner("loading from redash..."):
+    dataset = getchRedashQueryResult(jsonUrl, queryId, userKey, parameters)
+  print()
   print("done.")
 
 crashesToProcess = len(dataset["query_result"]["data"]["rows"])
@@ -421,6 +539,7 @@ for recrow in dataset["query_result"]["data"]["rows"]:
 
   crashId = props['crash_id']
   crashDate = props['crash_date']
+  minidumpHash = props['minidump_sha256_hash']
 
   # Ignore crashes older than 7 days
   if not checkCrashAge(crashDate):
@@ -438,10 +557,10 @@ for recrow in dataset["query_result"]["data"]["rows"]:
         # the local json cache we have in memory here. Saves having
         # to delete the file and symbolicate everything again.
         # report['clientid'] = clientId
+        # report['minidumphash'] = minidumpHash
         break
 
   if found:
-    sigCounter[signature] = len(reports[signature]['reportList'])
     totalCrashesProcessed += 1
     progress(totalCrashesProcessed, crashesToProcess)
     continue
@@ -453,15 +572,18 @@ for recrow in dataset["query_result"]["data"]["rows"]:
   signature = generateSignature(payload)
 
   if len(signature) == 0:
-    print("zero len sig")
+    #print("zero len sig")
+    totalCrashesProcessed += 1
     continue
 
   crash_info = props['stack_traces']['crash_info']
 
   if signature == 'EMPTY: no crashing thread identified':
+    totalCrashesProcessed += 1
     continue
 
   if signature == 'EMPTY: no frame data available':
+    totalCrashesProcessed += 1
     continue
 
   if signature == "<T>":
@@ -511,18 +633,22 @@ for recrow in dataset["query_result"]["data"]["rows"]:
     'devvendor': devVendor,
     'devgen': devGen,
     'devchipset': devChipset,
-    'devdevice': devDevice
+    'devdevice': devDevice,
+    'minidumphash': minidumpHash
   }
 
   # save this crash in our report list
   reports[signature]['reportList'].append(report)
 
-  sigCounter[signature] = len(reports[signature]['reportList'])
   totalCrashesProcessed += 1
 
   progress(totalCrashesProcessed, crashesToProcess)
 
 print('\n')
+
+if totalCrashesProcessed == 0:
+  print('No reports processed.')
+  exit()
 
 ###########################################################
 # Post processing steps
@@ -552,6 +678,12 @@ for sig in reports:
 
 if needsUpdate:
   purgeOldReports(reports)
+
+# generate a top crash list
+sigCounter = Counter()
+for sig in reports:
+  sigCounter[sig] = len(reports[sig]['reportList'])
+
 
 ###########################################################
 ### HTML generation
@@ -609,14 +741,25 @@ for sig, crashcount in collection:
   if crashcount < MinCrashCount: # Skip small crash count reports
     continue
 
+  crashStatsQuery = 'https://crash-stats.mozilla.org/search/?'
+
   signatureIndex += 1
   reportHtml = str()
   idx = 0
+  hashTotal= 0
   for report in reports[sig]['reportList']:
     idx = idx + 1
     if idx > MaxReportCount:
       break
     oombytes = report['oom_size'] if not None else '0'
+
+    appendAmp = False
+    try:
+      crashStatsQuery += 'minidump_sha256_hash=~' + report['minidumphash']
+      hashTotal += 1
+      appendAmp = False
+    except:
+      pass
 
     stackHtml = str()
     for frameData in report['stack']:
@@ -646,6 +789,8 @@ for sig, crashcount in collection:
                                                           devchipset=report['devchipset'],
                                                           compositor=sigRecord['compositor'],
                                                           stackline=stackHtml)
+    if appendAmp:
+      crashStatsQuery += '&'
 
   sigHtml = Template(outerReportTemplate).substitute(expandosig=('sig'+str(signatureIndex)),
                                                      os=sigRecord['opoerating_system'],
@@ -654,10 +799,19 @@ for sig, crashcount in collection:
                                                      arch=sigRecord['arch'],
                                                      report=reportHtml)
 
+  crashStatsQuery = crashStatsQuery.rstrip('&')
+
+  linkStyle = 'inline-block'
+  if hashTotal == 0:
+    crashStatsQuery = ''
+    linkStyle = 'none'
+
   sigMetaHtml += Template(outerSigMetaTemplate).substitute(rank=signatureIndex,
                                                            percent=("%.00f%%" % percent),
                                                            expandosig=('sig'+str(signatureIndex)),
                                                            signature=(html.escape(sig)),
+                                                           style=linkStyle,
+                                                           cslink=crashStatsQuery,
                                                            clientcount=sigRecord['clientcount'],
                                                            count=crashcount,
                                                            reports=sigHtml)
