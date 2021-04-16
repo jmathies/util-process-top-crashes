@@ -38,10 +38,9 @@ from fx_crash_sig.crash_processor import CrashProcessor
 # -p (k=v)      : k=v redash query parameters to pass to the query request.
 # python crashes.py -n nightly -d nightly -u https://sql.telemetry.mozilla.org -k (userapikey) -q 79354 -p process_type=gpu -p version=89 -p channel=nightly
 
-## crashstats proto signature search
+## TODO
 ## bugzilla search
 ## rudimentary annotation support through a static json file
-## driver version and device id
 
 ###########################################################
 # Global consts
@@ -163,15 +162,16 @@ def getchRedashQueryResult(redash_url, query_id, api_key, params):
   s = requests.Session()
   s.headers.update({'Authorization': 'Key {}'.format(api_key)})
 
-  #payload = dict(max_age=0, parameters=params) force a refresh vs. use the cached value
-  payload = dict(parameters=params)
+  payload = dict(max_age=86400, parameters=params)
 
   url = "%s/api/queries/%s/results" % (redash_url, query_id)
   response = s.post(url, data=json.dumps(payload))
 
   if response.status_code != 200:
-      raise Exception('Redash query failed.')
-
+    print("\nquery error '%s'" % response)
+    pp.pprint(payload)
+    raise Exception('Redash query failed.')
+  
   #{ 'job': { 'error': '',
   #           'id': '21429857-5fd0-443d-ba4b-fb9cc6d49add',
   #           'query_result_id': None,
@@ -190,7 +190,7 @@ def getchRedashQueryResult(redash_url, query_id, api_key, params):
   response = s.get('{}/api/queries/{}/results/{}.json'.format(redash_url, query_id, result_id))
 
   if response.status_code != 200:
-      raise Exception('Failed getting results.')
+      raise Exception('Failed getting results. (Check your redash query for errors.) statuscode=%d' % response.status_code)
 
   return response.json()
 
@@ -451,6 +451,20 @@ def dumpTemplates():
   print(innerStackTemplate)
   exit()
 
+# return true if we should skip processing this signature
+def processSignature(signature):
+  if len(signature) == 0:
+    return True
+  elif signature == 'EMPTY: no crashing thread identified':
+    return True
+  elif signature == 'EMPTY: no frame data available':
+    return True
+  elif signature == "<T>":
+    print("sig <T>")
+    return True
+
+  return False
+
 ###########################################################
 # Process crashes and stacks
 ###########################################################
@@ -488,6 +502,11 @@ if len(userKey) == 0:
 elif len(queryId) == 0:
   print("missing query id.")
   exit()
+
+parameters['crashcount'] = str(CrashProcessMax)
+channel = parameters['channel']
+fxVersion = parameters['version']
+processType = parameters['process_type']
 
 print("processing %d reports" % CrashProcessMax)
 
@@ -529,7 +548,10 @@ for recrow in dataset["query_result"]["data"]["rows"]:
   devGen = recrow['gen']
   devChipset = recrow['chipset']
   devDevice = recrow['device']
+  drvVer = recrow['driver_version']
+  drvDate = recrow['driver_date']
   clientId = recrow['client_id']
+  devDesc = recrow['device_description']
 
   # Load the json crash payload from recrow
   props = json.loads(recrow["payload"])
@@ -540,9 +562,15 @@ for recrow in dataset["query_result"]["data"]["rows"]:
   crashId = props['crash_id']
   crashDate = props['crash_date']
   minidumpHash = props['minidump_sha256_hash']
+  crashReason = props['metadata']['moz_crash_reason']
+  crash_info = props['stack_traces']['crash_info']
+
+  if crashReason != None:
+    crashReason = crashReason.strip('\n')
 
   # Ignore crashes older than 7 days
   if not checkCrashAge(crashDate):
+    totalCrashesProcessed += 1
     continue
 
   # check if the crash id is processed, if so continue
@@ -558,41 +586,40 @@ for recrow in dataset["query_result"]["data"]["rows"]:
         # to delete the file and symbolicate everything again.
         # report['clientid'] = clientId
         # report['minidumphash'] = minidumpHash
+        # report['driverversion'] = drvVer
+        # report['driverdate'] = drvDate
+        # report['devdescription'] = devDesc
+        # report['crashreason'] = crashReason
         break
+
+  # purge old signatures of the crash reason - remove me
+  if crashReason != None:
+    index = signature.find(crashReason)
+    if index != -1:
+      found = False
 
   if found:
     totalCrashesProcessed += 1
     progress(totalCrashesProcessed, crashesToProcess)
     continue
   
-  #print("processing: %s" % crashId)
-
   # symbolicate and return payload result
   payload = symbolicate(props)
   signature = generateSignature(payload)
 
-  if len(signature) == 0:
-    #print("zero len sig")
+  if processSignature(signature):
     totalCrashesProcessed += 1
     continue
 
-  crash_info = props['stack_traces']['crash_info']
+  if crashReason != None:
+    oldSignature = signature + " - " + crashReason
+    if oldSignature in reports.keys():
+      report = reports[oldSignature]
+      del reports[oldSignature]
+      reports[signature] = report
+      print()
+      print("replaced: '" + oldSignature + "' with '" + signature + "'")
 
-  if signature == 'EMPTY: no crashing thread identified':
-    totalCrashesProcessed += 1
-    continue
-
-  if signature == 'EMPTY: no frame data available':
-    totalCrashesProcessed += 1
-    continue
-
-  if signature == "<T>":
-    print("sig <T>")
-    continue;
-
-  reason = str(props['metadata']['moz_crash_reason'])
-  if reason != 'None':
-    signature += " - " + str(props['metadata']['moz_crash_reason'])
 
   # pull stack information for the crashing thread
   crashingThreadIndex = payload['crashing_thread']
@@ -634,7 +661,11 @@ for recrow in dataset["query_result"]["data"]["rows"]:
     'devgen': devGen,
     'devchipset': devChipset,
     'devdevice': devDevice,
-    'minidumphash': minidumpHash
+    'devdescription': devDesc,
+    'driverversion' : drvVer,
+    'driverdate': drvDate,
+    'minidumphash': minidumpHash,
+    'crashreason': crashReason
   }
 
   # save this crash in our report list
@@ -664,14 +695,13 @@ for sig in reports:
   clientCounts[sig] = list()
   for report in reports[sig]['reportList']:
     try:
-      clientId = report['clientid']
+      test = report['devdescription']
     except:
-      # this report never had its client id added when we updated the
-      # report list to include client ids. set the date back far enough
-      # such that purging of old reports will strip this record out.
-      #report['crashdate'] = "2020-01-01"
-      #needsUpdate = True
+      # purge records when we update the local db
+      report['crashdate'] = "2020-01-01"
+      needsUpdate = True
       continue
+    clientId = report['clientid']
     if clientId not in clientCounts[sig]:
       clientCounts[sig].append(clientId)
   reports[sig]['clientcount'] = len(clientCounts[sig])
@@ -721,7 +751,8 @@ outerReportTemplate = outerReportTemplate.strip()
 outerSigMetaTemplate = outerSigMetaTemplate.strip()
 outerSigTemplate = outerSigTemplate.strip()
 
-resultFile = open(("%s.html" % outputFilename), "w")
+#resultFile = open(("%s.html" % outputFilename), "w", encoding="utf-8")
+resultFile = open(("%s.html" % outputFilename), "w", errors="replace")
 
 signatureHtml = str()
 sigMetaHtml = str()
@@ -741,9 +772,24 @@ for sig, crashcount in collection:
   if crashcount < MinCrashCount: # Skip small crash count reports
     continue
 
-  crashStatsQuery = 'https://crash-stats.mozilla.org/search/?'
-
   signatureIndex += 1
+
+  crashStatsHashQuery = 'https://crash-stats.mozilla.org/search/?'
+  crashStatsQuery = 'https://crash-stats.mozilla.org/search/?signature=~%s&product=Firefox&_facets=signature&process_type=%s' % (sig, processType)
+
+  # For certain types of reasons like RustMozCrash, hand pick
+  # the most common for a report list. Otherwise just dump the
+  # first MaxReportCount.
+  #reasonCounter = Counter()
+  #reportList = dict()
+  #for report in reports[sig]['reportList']:
+  #  crashReason = report['crashreason']
+  #  if (crashReason == None):
+  #    crashReason = ''
+  #  reasonCounter[crashReason] += 1
+  #reportCol = reasonCounter.most_common(MaxReportCount)
+  #for reason, reasoncount in reportCol:
+
   reportHtml = str()
   idx = 0
   hashTotal= 0
@@ -755,9 +801,9 @@ for sig, crashcount in collection:
 
     appendAmp = False
     try:
-      crashStatsQuery += 'minidump_sha256_hash=~' + report['minidumphash']
+      crashStatsHashQuery += 'minidump_sha256_hash=~' + report['minidumphash']
       hashTotal += 1
-      appendAmp = False
+      appendAmp = True
     except:
       pass
 
@@ -768,29 +814,45 @@ for sig, crashcount in collection:
       frame = frameData['frame']
       srcUrl = frameData['srcUrl']
       moduleName = frameData['module']
-      if (len(srcUrl) > 0):
-        stackHtml += Template(innerStackTemplate).substitute(frameindex=frameIndex,
-                                                             frame=escape(frame),
-                                                             srcurl=srcUrl,
-                                                             module=moduleName,
-                                                             style='inline-block')
-      else:
-        stackHtml += Template(innerStackTemplate).substitute(frameindex=frameIndex,
-                                                             frame=escape(frame),
-                                                             srcurl='',
-                                                             module=moduleName,
-                                                             style='none')
+
+      linkStyle = 'inline-block'
+      srcLink = srcUrl
+      if len(srcUrl) == 0:
+        linkStyle = 'none'
+        srcLink = ''
+
+      stackHtml += Template(innerStackTemplate).substitute(frameindex=frameIndex,
+                                                            frame=escape(frame),
+                                                            srcurl=srcLink,
+                                                            module=moduleName,
+                                                            style=linkStyle)
+
+    # Redash meta data dump for a particular crash id
+    infoLink = 'https://sql.telemetry.mozilla.org/queries/79462?p_channel=%s&p_process_type=%s&p_version=%s&p_crash_id=%s' % (channel, processType, fxVersion, report['crashid'])
+
+    crashReason = report['crashreason']
+    if (crashReason == None):
+      crashReason = ''
+    
+    crashType = report['type']
+    crashType = crashType.lstrip('EXCEPTION_')
 
     reportHtml += Template(outerStackTemplate).substitute(expandostack=('st'+str(signatureIndex)+'-'+str(idx)),
-                                                          rindex=idx, type=report['type'],
+                                                          rindex=idx,
+                                                          type=crashType,
                                                           oomsize=oombytes,
                                                           devvendor=report['devvendor'],
                                                           devgen=report['devgen'],
                                                           devchipset=report['devchipset'],
+                                                          description=report['devdescription'],
+                                                          drvver=report['driverversion'],
+                                                          drvdate=report['driverdate'],
                                                           compositor=sigRecord['compositor'],
+                                                          reason=crashReason,
+                                                          infolink=infoLink,
                                                           stackline=stackHtml)
     if appendAmp:
-      crashStatsQuery += '&'
+      crashStatsHashQuery += '&'
 
   sigHtml = Template(outerReportTemplate).substitute(expandosig=('sig'+str(signatureIndex)),
                                                      os=sigRecord['opoerating_system'],
@@ -799,19 +861,20 @@ for sig, crashcount in collection:
                                                      arch=sigRecord['arch'],
                                                      report=reportHtml)
 
-  crashStatsQuery = crashStatsQuery.rstrip('&')
+  crashStatsHashQuery = crashStatsHashQuery.rstrip('&')
 
-  linkStyle = 'inline-block'
+  searchIconClass = 'icon'
   if hashTotal == 0:
-    crashStatsQuery = ''
-    linkStyle = 'none'
+    crashStatsHashQuery = ''
+    searchIconClass = 'lticon'
 
   sigMetaHtml += Template(outerSigMetaTemplate).substitute(rank=signatureIndex,
                                                            percent=("%.00f%%" % percent),
                                                            expandosig=('sig'+str(signatureIndex)),
                                                            signature=(html.escape(sig)),
-                                                           style=linkStyle,
-                                                           cslink=crashStatsQuery,
+                                                           iconclass=searchIconClass,
+                                                           cslink=crashStatsHashQuery,
+                                                           cssearchlink=crashStatsQuery,
                                                            clientcount=sigRecord['clientcount'],
                                                            count=crashcount,
                                                            reports=sigHtml)
