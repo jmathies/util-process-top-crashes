@@ -4,13 +4,13 @@ Note, to get the html displaying right, you'll need to download fontawesome webf
 
 Usage:
 
--u (url)      : redash rest endpoint url
--k (str)      : redash user api key
--q (query id) : redash api query id
--n (name)     : local json cache filename to use (excluding extension)
--d (name)     : local html output filename to use (excluding extension)
--c (count)    : number of reports to process, overrides the default of 5000
--p (k=v)      : k=v redash query parameters to pass to the query request.
+-u (url)      : redash rest endpoint url<br/>
+-k (str)      : redash user api key<br/>
+-q (query id) : redash api query id<br/>
+-n (name)     : local json cache filename to use (excluding extension)<br/>
+-d (name)     : local html output filename to use (excluding extension)<br/>
+-c (count)    : number of reports to process, overrides the default of 5000<br/>
+-p (k=v)      : k=v redash query parameters to pass to the query request.<br/>
 
 required -p parameters: process_type, version, channel
 
