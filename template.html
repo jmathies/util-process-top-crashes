@@ -1,21 +1,29 @@
 ﻿<!DOCTYPE html>
-
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml">
 <head>
   <meta charset="utf-8" />
   <title>Utility Process Top Crashes</title>
   <link rel="stylesheet" href="crashstyles.css">
+  <link rel="stylesheet" href="fontawesome/css/fontawesome.css">
+  <link rel="stylesheet" href="fontawesome/css/solid.css">
   <style>
   </style>
 </head>
 <body onload="onLoad()">
   <script type="text/javascript">
-    function expandElement(id) {
+    function expandElement(evt, id) {
       var e = document.getElementById(id);
-      if (e.style.display == 'none') {
-        e.style.display = 'block';
-      } else {
-        e.style.display = 'none';
+      var clkTarget = evt.target instanceof HTMLSpanElement;
+      var cancel = evt ? !clkTarget : false;
+      if (cancel && evt) {
+        evt.preventDefault();
+      }
+      if (!clkTarget) {
+        if (e.style.display == 'none') {
+          e.style.display = 'block';
+        } else {
+          e.style.display = 'none';
+        }
       }
       return false;
     }
@@ -44,7 +52,7 @@
     function onLoad() {
       var anchor = getAnchor();
       if (anchor != null) {
-        expandElement(anchor.substr(1));
+        expandElement(null, anchor.substr(1));
       }
     }
   </script>
@@ -61,24 +69,32 @@
     </div>
 
     <div id="listheader">
-      <div id="hdr-rank">rank</div>
-      <div id="hdr-percent">%</div>
-      <div id="hdr-signature">signature</div>
-      <div id="hdr-clientcount">clients</div>
-      <div id="hdr-count">count</div>
+      <div class="hdr-rank">rank</div>
+      <div class="hdr-percent">%</div>
+      <div class="hdr-signature">signature</div>
+      <div class="hdr-rightpanel">
+        <div class="hdr-search"></div>
+        <div class="hdr-search"></div>
+        <div class="hdr-clientcount">clients</div>
+        <div class="hdr-count">count</div>
+      </div>
     </div>
 
     <!-- start of signature template -->
-    <div class="signature" onclick="return expandElement('$expandosig');" id="a$expandosig">
-      <div id="hdr-rank">$rank</div>
-      <div id="hdr-percent">$percent</div>
-      <div id="hdr-signature"><a href='#a$expandosig'>$signature</a></div>
-      <div id="hdr-clientcount">$clientcount</div>
-      <div id="hdr-count">$count</div>
+    <div class="signature" onclick="expandElement(event, '$expandosig');" id="a$expandosig">
+      <div class="hdr-rank">$rank</div>
+      <div class="hdr-percent">$percent</div>
+      <div class="hdr-signature"><a href='#a$expandosig'>$signature</a></div>
+      <div class="hdr-rightpanel">
+        <div class="hdr-search"><a href='$cslink' target="_blank"><span class="$iconclass fas fa-fingerprint"></span></a></div>
+        <div class="hdr-search"><a href='$cssearchlink' target="_blank"><span class="$iconclass fas fa-signature"></span></a></div>
+        <div class="hdr-clientcount">$clientcount</div>
+        <div class="hdr-count">$count</div>
+      </div>
     </div>
     <!-- start of signature meta template -->
     <div style="display:none;" id="$expandosig">
-      <div class="signature-meta" onclick="return expandElement('$expandosig');">
+      <div class="signature-meta" onclick="expandElement(event, '$expandosig');">
         <div class="meta-title">Operating System</div><div class="meta-data">$os</div><br />
         <div class="meta-title">Firefox Version</div><div class="meta-data">$fxver</div><br />
         <div class="meta-title">Version</div><div class="meta-data">$osver</div><br />
@@ -86,28 +102,41 @@
       </div>
       <div class="report">
         <div class="report-header">
-          <div class="report-title">Report</div>
-          <div class="report-meta-data-long">Compositor</div>
+          <div class="report-meta-data-index">Report</div>
+          <div class="report-meta-data-meta">Meta</div>
+          <div class="report-meta-data-compositor">Compositor</div>
           <div class="report-meta-data-short">OOM Size</div>
-          <div class="report-meta-data-short">Vendor</div>
-          <div class="report-meta-data-long">Generation / Chipset</div>
-          <div class="report-meta-data-long">Type</div>
+          <div class="report-meta-data-long">Hardware</div>
+          <div class="report-meta-data-short">Gen</div>
+          <div class="report-meta-data-short">Chipset</div>
+          <div class="report-meta-data-short">Version</div>
+          <div class="report-meta-data-short">Date</div>
+          <div class="report-meta-data-type">Crash Type</div>
+          <div class="report-meta-data-reason">Reason</div>
         </div>
       </div>
       <!-- start of report template -->
       <div class="report">
-        <div class="report-meta" onclick="return expandElement('$expandostack');">
-          <div class="report-title">$rindex</div>
-          <div class="report-meta-data-long">$compositor</div>
+        <div class="report-meta" onclick="expandElement(event, '$expandostack');">
+          <div class="report-meta-data-index">$rindex</div>
+          <div class="report-meta-data-meta"><a target="_blank" href="$infolink"><span class="icon fas fa-external-link-alt"></span></a></div>
+          <div class="report-meta-data-compositor">$compositor</div>
           <div class="report-meta-data-short">$oomsize</div>
-          <div class="report-meta-data-short">$devvendor</div>
-          <div class="report-meta-data-long">$devgen / $devchipset</div>
-          <div class="report-meta-data-long">$type</div>
+          <div class="report-meta-data-long">$description</div>
+          <div class="report-meta-data-short">$devgen</div>
+          <div class="report-meta-data-short">$devchipset</div>
+          <div class="report-meta-data-short">$drvver</div>
+          <div class="report-meta-data-short">$drvdate</div>
+          <div class="report-meta-data-type">$type</div>
+          <div class="report-meta-data-reason">$reason</div>
         </div>
         <div class="stack" style="display:none;" id="$expandostack">
           <!-- start of stackline template -->
           <div class='stackline'>
-            <div class="frame-index">$frameindex</div><div class="src-link"><a style="display:$style;" href="$srcurl">src</a></div><div class="module-name">$module</div><div class="stack-frame">$frame</div>
+            <div class="frame-index">$frameindex</div>
+            <div class="src-link"><a target="_blank" style="display:$style;" href="$srcurl">src</a></div>
+            <div class="module-name">$module</div>
+            <div class="stack-frame">$frame</div>
           </div>
           <!-- end of stackline template -->
         </div>
