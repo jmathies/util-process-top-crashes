@@ -28,21 +28,6 @@
       return false;
     }
 
-    function filter(el, type) {
-      switch (type) {
-        case 'webrender':
-        case 'd3d11':
-        case 'basic':
-          var col = document.getElementsByClassName('compositor');
-          Array.prototype.forEach.call(col, function (item) {
-            if (item.textContent == 'webrender') {
-
-            }
-          })
-          break;
-      }
-    }
-
     function getAnchor() {
       var currentUrl = document.URL,
         urlParts = currentUrl.split('#');
@@ -59,16 +44,13 @@
 
   <!-- start of crash template -->
   <div id="mainlist">
-    <div id="options">
-      <div class="filterbutton" onclick="return filter(this, 'oom');">OOM</div>
-      <div class="filterbutton" onclick="return filter(this, 'x86');">x86</div>
-      <div class="filterbutton" onclick="return filter(this, 'x86-64');">x86-64</div>
-      <div class="filterbutton" onclick="return filter(this, 'webrender');">Webrender</div>
-      <div class="filterbutton" onclick="return filter(this, 'd3d11');">D3D11</div>
-      <div class="filterbutton" onclick="return filter(this, 'basic');">Basic</div>
+    <div class="header">
+      <div class="header-elements">Channel - $channel</div>
+      <div class="header-elements">Version - $version</div>
+      <div class="header-elements">Process - $process</div>
+      <div class="header-elements">($sigcount signatures, $repcount crashes)</div>
     </div>
-
-    <div id="listheader">
+    <div class="listheader">
       <div class="hdr-rank">rank</div>
       <div class="hdr-percent">%</div>
       <div class="hdr-signature">signature</div>
@@ -86,8 +68,8 @@
       <div class="hdr-percent">$percent</div>
       <div class="hdr-signature"><a href='#a$expandosig'>$signature</a></div>
       <div class="hdr-rightpanel">
-        <div class="hdr-search"><a href='$cslink' target="_blank"><span class="$iconclass fas fa-fingerprint"></span></a></div>
-        <div class="hdr-search"><a href='$cssearchlink' target="_blank"><span class="$iconclass fas fa-signature"></span></a></div>
+        <div class="hdr-search"><a href='$cslink' target="_blank" title="Find crash reports"><span class="$iconclass fas fa-fingerprint"></span></a></div>
+        <div class="hdr-search"><a href='$cssearchlink' target="_blank" title="Search for signature"><span class="$iconclass fas fa-signature"></span></a></div>
         <div class="hdr-clientcount">$clientcount</div>
         <div class="hdr-count">$count</div>
       </div>
@@ -119,7 +101,7 @@
       <div class="report">
         <div class="report-meta" onclick="expandElement(event, '$expandostack');">
           <div class="report-meta-data-index">$rindex</div>
-          <div class="report-meta-data-meta"><a target="_blank" href="$infolink"><span class="icon fas fa-external-link-alt"></span></a></div>
+          <div class="report-meta-data-meta"><a target="_blank" title="View meta data on redash" href="$infolink"><span class="icon fas fa-external-link-alt"></span></a><span class="$startupiconclass fas fa-rocket"></span></div>
           <div class="report-meta-data-compositor">$compositor</div>
           <div class="report-meta-data-short">$oomsize</div>
           <div class="report-meta-data-long">$description</div>

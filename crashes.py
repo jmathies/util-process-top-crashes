@@ -41,6 +41,7 @@ from fx_crash_sig.crash_processor import CrashProcessor
 ## TODO
 ## bugzilla search
 ## rudimentary annotation support through a static json file
+## battery-quarter for ooms
 
 ###########################################################
 # Global consts
@@ -65,6 +66,9 @@ MaxReportCount = 30
 # Set to True to target a local json file for testing
 LoadLocally = False
 LocalJsonFile = "GPU_Raw_Crash_Data_2021_03_19.json"
+# Report analysis type - 0 = graphics, 1 = media. Controsl what
+# we use in identifying unique signatures.
+ReportType = 0 # currently not used
 # Default json file url if not specified via the command line.
 jsonUrl = "https://sql.telemetry.mozilla.org/api/queries/78997/results.json?api_key=0XTUThlCYJLBQaKsc8cR4296Y6fasm8vezkZSNPg"
 # Default report output filename if not specified via
@@ -316,13 +320,17 @@ def processStack(frames):
     if skipFrame is False:
       hashData += functionCall
 
+  #if ReportType == 0:
+  #elif ReportType == 1:
+  #else:
+  #  raise Exception('Undefined ReportType!')
+
   # Append any crash meta data to our hashData so it applies to uniqueness.
   # Any variance in this data will cause this signature to be broken out as
   # a separate signature in the final top crash list.
   hashData += operatingSystem
   hashData += operatingSystemVer
   # hashData += compositor
-  # The template has filtering for arch, so this keeps x86 and x64 split up.
   hashData += arch
   # The redash queries we are currently using target specific versions, so this
   # doesn't have much of an impact except on beta, where we want to see the effect
@@ -348,6 +356,13 @@ def findCrash(crashId):
   file = "crashes/" + crashId + ".txt"
   return os.path.isfile(file)
 
+def getDatasetStats(reports):
+  sigCount = len(reports)
+  reportCount = 0
+  for sig in reports:
+    reportCount += len(reports[sig]['reportList'])
+  return sigCount, reportCount
+
 # Cache the reports database to a local json file. Speeds
 # up symbolication runs across days by avoid re-symbolicating
 # reports.
@@ -355,22 +370,21 @@ def cacheReports(reports):
   file = ("%s.json" % dbFilename)
   with open(file, "w") as database:
       database.write(json.dumps(reports))
+  sigCount, reportCount = getDatasetStats(reports)
+  print("Cache database stats: %d signatures, %d reports." % (sigCount, reportCount))
 
 # Load the local report database
 def loadReports():
   file = ("%s.json" % dbFilename)
-  data = dict()
+  reports = dict()
   try:
     with open(file) as database:
-      data = json.load(database)
+      reports = json.load(database)
   except FileNotFoundError:
     return dict()
-  sigCount = len(data)
-  reportCount = 0
-  for sig in data:
-    reportCount += len(data[sig]['reportList'])
-  print("Existing database stats: %d signatures, %d reports" % (sigCount, reportCount))
-  return data
+  sigCount, reportCount = getDatasetStats(reports)
+  print("Existing database stats: %d signatures, %d reports." % (sigCount, reportCount))
+  return reports
 
 def escape(text):
   return html.escape(text)
@@ -473,7 +487,7 @@ queryId = ''
 userKey = ''
 parameters = dict()
 
-options, remainder = getopt.getopt(sys.argv[1:], 'u:n:d:c:k:q:p:')
+options, remainder = getopt.getopt(sys.argv[1:], 'u:n:d:c:k:q:p:t:')
 for o, a in options:
   if o == '-u':
     jsonUrl = a
@@ -492,6 +506,15 @@ for o, a in options:
   elif o == '-k':
     userKey = a
     print("user key: %s" %  userKey)
+  elif o == '-t':
+    repType = '?'
+    if a == 'media':
+      ReportType = 1
+      repType = 'Media'
+    else:
+      ReportType = 0
+      repType = 'Graphics'
+    print("analysis type: %s" %  repType)
   elif o == '-p':
     param = a.split('=')
     parameters[param[0]] = param[1]
@@ -563,7 +586,13 @@ for recrow in dataset["query_result"]["data"]["rows"]:
   crashDate = props['crash_date']
   minidumpHash = props['minidump_sha256_hash']
   crashReason = props['metadata']['moz_crash_reason']
-  crash_info = props['stack_traces']['crash_info']
+  crashInfo = props['stack_traces']['crash_info']
+
+  startupCrash = 0
+  try:
+    startupCrash = int(props['metadata']['startup_crash'])
+  except:
+    pass
 
   if crashReason != None:
     crashReason = crashReason.strip('\n')
@@ -590,6 +619,8 @@ for recrow in dataset["query_result"]["data"]["rows"]:
         # report['driverdate'] = drvDate
         # report['devdescription'] = devDesc
         # report['crashreason'] = crashReason
+        report['compositor'] = compositor
+        report['startup'] = startupCrash
         break
 
   # purge old signatures of the crash reason - remove me
@@ -597,7 +628,6 @@ for recrow in dataset["query_result"]["data"]["rows"]:
     index = signature.find(crashReason)
     if index != -1:
       found = False
-
   if found:
     totalCrashesProcessed += 1
     progress(totalCrashesProcessed, crashesToProcess)
@@ -644,7 +674,6 @@ for recrow in dataset["query_result"]["data"]["rows"]:
   if (hash not in reports[signature]['hashList']):
     reports[signature]['hashList'].append(hash)
     reports[signature]['opoerating_system'] = operatingSystem
-    reports[signature]['compositor'] = compositor
     reports[signature]['arch'] = arch
     reports[signature]['os_version'] = operatingSystemVer
     reports[signature]['firefoxVer'] = firefoxVer
@@ -654,9 +683,10 @@ for recrow in dataset["query_result"]["data"]["rows"]:
     'clientid': clientId,
     'crashid': crashId,
     'crashdate': crashDate,
+    'compositor': compositor,
     'stack': stack,
     'oom_size': oom_size,
-    'type': crash_info['type'],
+    'type': crashInfo['type'],
     'devvendor': devVendor,
     'devgen': devGen,
     'devchipset': devChipset,
@@ -665,7 +695,8 @@ for recrow in dataset["query_result"]["data"]["rows"]:
     'driverversion' : drvVer,
     'driverdate': drvDate,
     'minidumphash': minidumpHash,
-    'crashreason': crashReason
+    'crashreason': crashReason,
+    'startup': startupCrash
   }
 
   # save this crash in our report list
@@ -692,10 +723,16 @@ purgeOldReports(reports)
 clientCounts = dict()
 needsUpdate = False
 for sig in reports:
+  # maintenence, we moved compositor into individual reports - remove me
+  try:
+    del reports[sig]['compositor']
+  except KeyError:
+    pass
   clientCounts[sig] = list()
   for report in reports[sig]['reportList']:
     try:
       test = report['devdescription']
+      test = report['compositor']
     except:
       # purge records when we update the local db
       report['crashdate'] = "2020-01-01"
@@ -758,6 +795,7 @@ signatureHtml = str()
 sigMetaHtml = str()
 signatureIndex = 0
 
+sigCount, reportCount = getDatasetStats(reports)
 collection = sigCounter.most_common(MostCommonLength)
 
 for sig, crashcount in collection:
@@ -837,6 +875,10 @@ for sig, crashcount in collection:
     crashType = report['type']
     crashType = crashType.lstrip('EXCEPTION_')
 
+    startupStyle = 'noicon'
+    if report['startup'] != 0:
+      startupStyle = 'icon'
+
     reportHtml += Template(outerStackTemplate).substitute(expandostack=('st'+str(signatureIndex)+'-'+str(idx)),
                                                           rindex=idx,
                                                           type=crashType,
@@ -847,9 +889,10 @@ for sig, crashcount in collection:
                                                           description=report['devdescription'],
                                                           drvver=report['driverversion'],
                                                           drvdate=report['driverdate'],
-                                                          compositor=sigRecord['compositor'],
+                                                          compositor=report['compositor'],
                                                           reason=crashReason,
                                                           infolink=infoLink,
+                                                          startupiconclass=startupStyle,
                                                           stackline=stackHtml)
     if appendAmp:
       crashStatsHashQuery += '&'
@@ -879,11 +922,17 @@ for sig, crashcount in collection:
                                                            count=crashcount,
                                                            reports=sigHtml)
 
-signatureHtml += Template(outerSigTemplate).substitute(signature=sigMetaHtml)
+signatureHtml += Template(outerSigTemplate).substitute(channel=channel,
+                                                       version=fxVersion,
+                                                       process=processType,
+                                                       sigcount=sigCount,
+                                                       repcount=reportCount,
+                                                       signature=sigMetaHtml)
 
 # Add processed date to the footer
 dateTime = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
-resultFile.write(Template(mainPage).substitute(main=signatureHtml, processeddate=dateTime))
+resultFile.write(Template(mainPage).substitute(main=signatureHtml,
+                                               processeddate=dateTime))
 resultFile.close()
 
 # Caching of reports
