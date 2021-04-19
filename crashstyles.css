@@ -2,7 +2,14 @@
   font: 14px Helvetica, Arial, sans-serif;
 }
 
-.comp {
+a:link {
+  color: #183a4e;
+  text-decoration: none;
+}
+
+a:visited {
+  color: #183a4e;
+  text-decoration: none;
 }
 
 #mainlist {
@@ -70,6 +77,10 @@
   width: 15px;
 }
 
+.copyicon {
+  cursor: pointer;
+}
+
 .hdr-clientcount {
   display: inline-block;
   padding: 5px;
@@ -99,13 +110,28 @@
   background-color: #e1eef7;
   display: inline-block;
   margin-bottom: 0px;
+  white-space: nowrap;
+}
+
+.signature-meta-left {
+  display: inline-block;
+  width: 400px;
+  border: solid 0px black;
+  white-space: nowrap;
+}
+
+.signature-meta-right {
+  display: inline-block;
+  width:auto;
+  border: solid 0px black;
+  white-space: nowrap;
 }
 
 .meta-title {
   margin-left: 10px;
   display: inline-block;
   border: 0px solid lightgrey;
-  width: 200px;
+  width: 150px;
 }
 
 .meta-data {

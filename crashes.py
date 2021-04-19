@@ -8,11 +8,11 @@ import re
 import sys
 import html
 import getopt
-import sys
 import threading
 import itertools
 import time
 import requests
+import math
 
 from string import Template
 from collections import Counter
@@ -79,7 +79,6 @@ outputFilename = "output" #.html
 dbFilename = "crashreports" #.json
 
 proc = CrashProcessor(MaxStackDepth, SymbolServerUrl)
-# proc = CrashProcessor()
 pp = pprint.PrettyPrinter(indent=2)
 
 def symbolicate(ping):
@@ -330,7 +329,6 @@ def processStack(frames):
   # a separate signature in the final top crash list.
   hashData += operatingSystem
   hashData += operatingSystemVer
-  # hashData += compositor
   hashData += arch
   # The redash queries we are currently using target specific versions, so this
   # doesn't have much of an impact except on beta, where we want to see the effect
@@ -385,6 +383,15 @@ def loadReports():
   sigCount, reportCount = getDatasetStats(reports)
   print("Existing database stats: %d signatures, %d reports." % (sigCount, reportCount))
   return reports
+
+def loadAnnotations(filename):
+  file = "%s_annotations.json" % filename
+  try:
+    with open(file) as database:
+      annotations = json.load(database)
+  except FileNotFoundError:
+    return dict()
+  return annotations
 
 def escape(text):
   return html.escape(text)
@@ -478,6 +485,30 @@ def processSignature(signature):
     return True
 
   return False
+
+def generateTopReports(reports):
+  # For certain types of reasons like RustMozCrash, organize
+  # the most common for a report list. Otherwise just dump the
+  # first MaxReportCount.
+  reasonCounter = Counter()
+  for report in reports:
+    crashReason = report['crashreason']
+    reasonCounter[crashReason] += 1
+  reportCol = reasonCounter.most_common(MaxReportCount)
+  if len(reportCol) < MaxReportCount:
+    return reports
+  colCount = len(reportCol)
+  maxReasonCount = int(math.ceil(MaxReportCount / colCount))
+  reportList = list()
+  count = 0
+  for reason, count in reportCol:
+    for report in reports:
+      if report['crashreason'] == reason:
+         reportList.append(report)
+         count += 1
+         if count > maxReasonCount:
+           break # next reason
+  return reportList
 
 ###########################################################
 # Process crashes and stacks
@@ -733,6 +764,7 @@ for sig in reports:
     try:
       test = report['devdescription']
       test = report['compositor']
+      test = report['startup']
     except:
       # purge records when we update the local db
       report['crashdate'] = "2020-01-01"
@@ -788,6 +820,8 @@ outerReportTemplate = outerReportTemplate.strip()
 outerSigMetaTemplate = outerSigMetaTemplate.strip()
 outerSigTemplate = outerSigTemplate.strip()
 
+#annDB = loadAnnotations(dbFilename)
+
 #resultFile = open(("%s.html" % outputFilename), "w", encoding="utf-8")
 resultFile = open(("%s.html" % outputFilename), "w", errors="replace")
 
@@ -815,27 +849,24 @@ for sig, crashcount in collection:
   crashStatsHashQuery = 'https://crash-stats.mozilla.org/search/?'
   crashStatsQuery = 'https://crash-stats.mozilla.org/search/?signature=~%s&product=Firefox&_facets=signature&process_type=%s' % (sig, processType)
 
-  # For certain types of reasons like RustMozCrash, hand pick
-  # the most common for a report list. Otherwise just dump the
-  # first MaxReportCount.
-  #reasonCounter = Counter()
-  #reportList = dict()
-  #for report in reports[sig]['reportList']:
-  #  crashReason = report['crashreason']
-  #  if (crashReason == None):
-  #    crashReason = ''
-  #  reasonCounter[crashReason] += 1
-  #reportCol = reasonCounter.most_common(MaxReportCount)
-  #for reason, reasoncount in reportCol:
+  # sort based on common reasons
+  reportsToReport = generateTopReports(reports[sig]['reportList'])
 
   reportHtml = str()
   idx = 0
   hashTotal= 0
-  for report in reports[sig]['reportList']:
+  for report in reportsToReport:
     idx = idx + 1
     if idx > MaxReportCount:
       break
     oombytes = report['oom_size'] if not None else '0'
+
+    crashReason = report['crashreason']
+    if (crashReason == None):
+      crashReason = ''
+
+    crashType = report['type']
+    crashType = crashType.lstrip('EXCEPTION_')
 
     appendAmp = False
     try:
@@ -844,6 +875,13 @@ for sig, crashcount in collection:
       appendAmp = True
     except:
       pass
+
+    # Redash meta data dump for a particular crash id
+    infoLink = 'https://sql.telemetry.mozilla.org/queries/79462?p_channel=%s&p_process_type=%s&p_version=%s&p_crash_id=%s' % (channel, processType, fxVersion, report['crashid'])
+
+    startupStyle = 'noicon'
+    if report['startup'] != 0:
+      startupStyle = 'icon'
 
     stackHtml = str()
     for frameData in report['stack']:
@@ -864,20 +902,6 @@ for sig, crashcount in collection:
                                                             srcurl=srcLink,
                                                             module=moduleName,
                                                             style=linkStyle)
-
-    # Redash meta data dump for a particular crash id
-    infoLink = 'https://sql.telemetry.mozilla.org/queries/79462?p_channel=%s&p_process_type=%s&p_version=%s&p_crash_id=%s' % (channel, processType, fxVersion, report['crashid'])
-
-    crashReason = report['crashreason']
-    if (crashReason == None):
-      crashReason = ''
-    
-    crashType = report['type']
-    crashType = crashType.lstrip('EXCEPTION_')
-
-    startupStyle = 'noicon'
-    if report['startup'] != 0:
-      startupStyle = 'icon'
 
     reportHtml += Template(outerStackTemplate).substitute(expandostack=('st'+str(signatureIndex)+'-'+str(idx)),
                                                           rindex=idx,
