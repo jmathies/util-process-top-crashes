@@ -12,12 +12,12 @@ import pprint
 pp = pprint.PrettyPrinter(indent=2)
 
 def saveAnnotations(ann, filename):
-  file = "%s_annotations.json" % filename
+  file = "%s.json" % filename
   with open(file, "w") as database:
       database.write(json.dumps(ann))
 
 def loadAnnotations(filename):
-  file = "%s_annotations.json" % filename
+  file = "%s.json" % filename
   try:
     with open(file) as database:
       annotations = json.load(database)
@@ -38,13 +38,13 @@ def escapeBugLinks(text):
 
 fixedBy = False
 newDatabase = False
-dbFilename = "default"
+dbFilename = "annotations"
+annotation = None
 
-options, remainder = getopt.getopt(sys.argv[1:], 's:a:f:p:d:c')
+options, remainder = getopt.getopt(sys.argv[1:], 's:a:f:p:cv:')
 for o, a in options:
   if o == '-a':
     annotation = a
-    print("annotation: '%s'" %  annotation)
   elif o == '-c':
     newDatabase = True
     print("Using a new database.")
@@ -53,16 +53,11 @@ for o, a in options:
   elif o == '-f':
     bugId = int(a)
     fixedBy = True
-    print("marking as fixed by bug #%d" % bugId)
   elif o == '-v':
     appliesToFxVersion = a
-    print("fixed in firefox version %d" % int(a))
   elif o == '-p':
     param = a.split('=')
     parameters[param[0]] = param[1]
-  elif o == '-d':
-    dbFilename = a
-    print("local database file: %s_annotations.json" %  dbFilename)
 
 #channel = parameters['channel']
 #fxVersion = parameters['version']
@@ -73,25 +68,36 @@ if not newDatabase:
   annDb = loadAnnotations(dbFilename)
 
 signature = signature.strip("'\n \t")
-annotation = annotation.strip("'\n \t")
 print('signature: [%s]' % signature)
+
+if fixedBy:
+  if appliesToFxVersion is None or bugId is None or annotation is None:
+    print("missing parameters for fixed by entry.")
+    exit()
+  print("Fixed by version %s (bug#%d). annotation: '%s'" % (appliesToFxVersion, bugId, annotation))
+elif annotation:
+  print("annotation: '%s'" %  annotation)
+else:
+  exit()
+
+if annotation is None:
+  annotation = ''
+annotation = annotation.strip("'\n \t")
 
 record = dict()
 if signature in annDb:
   record = annDb[signature]
 else:
   record['annotations'] = list() # string list
-  record['fixedby'] = list() # [n] = { 'version': 87, 'bug': 1234567 }
-
-# escape for html
-annotation = escape(annotation)
-# convert bug references to links
-annotation = escapeBugLinks(annotation)
-
-record['annotations'].append(annotation)
+  record['fixedby'] = list() # [n] = { 'version': '87.b0', 'bug': 1234567 }
 
 if fixedBy:
-  record['fixedby'].append(bugId)
+  entry = { 'bug': bugId, 'version': appliesToFxVersion, 'annotation':annotation}
+  record['fixedby'].append(entry)
+elif len(annotation) > 0:
+  annotation = annotation.strip("'\n \t")
+  record['annotations'].append(annotation)
+
 
 annDb[signature] = record
 

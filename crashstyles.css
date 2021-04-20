@@ -3,12 +3,12 @@
 }
 
 a:link {
-  color: #183a4e;
+  color: #116594;
   text-decoration: none;
 }
 
 a:visited {
-  color: #183a4e;
+  color: #116594;
   text-decoration: none;
 }
 
@@ -259,6 +259,52 @@ a:visited {
 }
 
 .processeddate {
+}
+
+.annotation-container {
+  position: absolute;
+  color: #183a4e;
+  z-index: 2;
+  background-color: #e1eef7;
+  top: 10px;
+  left: 10%;
+  right: 10%;
+  min-height: 150px;
+  min-width: 300px;
+  border: 1px solid lightgray;
+  border-radius: 3px;
+  padding: 10px;
+}
+
+.ann-hdr {
+  display: inline-block;
+  white-space: nowrap;
+  border: solid 0px blue;
+  width: 100%;
+}
+
+.ann-fixed-by {
+  display: inline-block;
+  white-space: nowrap;
+  width: 150px;
+  border: solid 0px gray;
+}
+
+.ann-notes {
+  display: inline-block;
+  white-space: nowrap;
+  border: solid 0px gray;
+}
+
+@keyframes delayed-hide {
+  to {
+    visibility: hidden;
+  }
+}
+
+.delayed-hide {
+  visibility: visible;
+  animation: 0s linear 2.3s forwards delayed-hide;
 }
 
 .icon {

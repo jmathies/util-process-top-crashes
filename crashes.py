@@ -42,6 +42,8 @@ from fx_crash_sig.crash_processor import CrashProcessor
 ## bugzilla search
 ## rudimentary annotation support through a static json file
 ## battery-quarter for ooms
+## fix the issue with signature links being temporary
+## add copy stack feature
 
 ###########################################################
 # Global consts
@@ -77,6 +79,7 @@ outputFilename = "output" #.html
 # Default filename for the crash stack cache file if
 # not specified via the command line.
 dbFilename = "crashreports" #.json
+annoFilename = "annotations"
 
 proc = CrashProcessor(MaxStackDepth, SymbolServerUrl)
 pp = pprint.PrettyPrinter(indent=2)
@@ -385,11 +388,13 @@ def loadReports():
   return reports
 
 def loadAnnotations(filename):
-  file = "%s_annotations.json" % filename
+  file = "%s.json" % filename
   try:
     with open(file) as database:
       annotations = json.load(database)
+      print("Loading %s annotations file." % file)
   except FileNotFoundError:
+    print("Could not find %s file." % file)
     return dict()
   return annotations
 
@@ -457,6 +462,11 @@ def extractAndTokenizeTemplate(token, srcTemplate, insertToken):
   template = srcTemplate[sIndex + len(start) : eIndex]
   return template, (header + '$' + insertToken + footer)
 
+def stripWhitespace(text):
+  text = text.strip(' \t\n')
+  return text
+  #return text.replace('\n', '')
+
 def dumpTemplates():
   print('mainPage -----')
   print(mainPage)
@@ -509,6 +519,18 @@ def generateTopReports(reports):
          if count > maxReasonCount:
            break # next reason
   return reportList
+
+def escapeBugLinks(text):
+  # convert bug references to links
+  # https://bugzilla.mozilla.org/show_bug.cgi?id=1323439
+  pattern = "bug ([0-9]*) "
+  replacement = "<a href='https://bugzilla.mozilla.org/show_bug.cgi?id=\\1'>\\1</a> "
+  result = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+  return result
+
+def createBugLink(id):
+  # convert bug references to links
+  return "<a href='https://bugzilla.mozilla.org/show_bug.cgi?id=" + str(id) + "'>bug " + str(id) + "</a>"
 
 ###########################################################
 # Process crashes and stacks
@@ -795,6 +817,8 @@ templateFile.close()
 # <!-- start of crash template -->
 # <!-- end of crash template -->
 innerTemplate, mainPage = extractAndTokenizeTemplate('crash', template, 'main')
+annotationTemplate, mainPage = extractAndTokenizeTemplate('annotation', mainPage, 'annotations')
+annotationReport, annotationTemplate = extractAndTokenizeTemplate('annotation report', annotationTemplate, 'annreports')
 
 # <!-- start of signature template -->
 # <!-- end of signature template -->
@@ -814,19 +838,22 @@ innerReportTemplate, outerReportTemplate = extractAndTokenizeTemplate('report', 
 # <!-- end of stackline template -->
 innerStackTemplate, outerStackTemplate = extractAndTokenizeTemplate('stackline', innerReportTemplate, 'stackline')
 
-outerStackTemplate = outerStackTemplate.strip()
-innerStackTemplate = innerStackTemplate.strip()
-outerReportTemplate = outerReportTemplate.strip()
-outerSigMetaTemplate = outerSigMetaTemplate.strip()
-outerSigTemplate = outerSigTemplate.strip()
-
-#annDB = loadAnnotations(dbFilename)
+outerStackTemplate = stripWhitespace(outerStackTemplate)
+innerStackTemplate = stripWhitespace(innerStackTemplate)
+outerReportTemplate = stripWhitespace(outerReportTemplate)
+outerSigMetaTemplate = stripWhitespace(outerSigMetaTemplate)
+outerSigTemplate = stripWhitespace(outerSigTemplate)
+annotationTemplate = stripWhitespace(annotationTemplate)
+annotationReport = stripWhitespace(annotationReport)
+# mainPage = stripWhitespace(mainPage) # mucks with js
+annDb = loadAnnotations(annoFilename)
 
 #resultFile = open(("%s.html" % outputFilename), "w", encoding="utf-8")
 resultFile = open(("%s.html" % outputFilename), "w", errors="replace")
 
 signatureHtml = str()
 sigMetaHtml = str()
+annotationsHtml = str()
 signatureIndex = 0
 
 sigCount, reportCount = getDatasetStats(reports)
@@ -935,11 +962,31 @@ for sig, crashcount in collection:
     crashStatsHashQuery = ''
     searchIconClass = 'lticon'
 
+  # ann$expandosig - view signature meta parameter
+  annIconClass = 'lticon'
+  if sig in annDb:
+    arec = record = annDb[sig]
+    # record['annotations'] (list)
+    sigAnnotations = str()
+    # record['fixedby'] (list of tables, { 'version': 87, 'bug': 1234567 }
+    for fb in record['fixedby']:
+      sigAnnotations += Template(annotationReport).substitute(annotations=escape(fb['annotation']),
+                                                              fixedbybug=createBugLink(str(fb['bug'])),
+                                                              fixedbyversion=fb['version'])
+    for annotation in record['annotations']:
+      annotation = escape(annotation)
+      annotation = escapeBugLinks(annotation)
+      sigAnnotations += Template(annotationReport).substitute(annotations=annotation, fixedbybug='', fixedbyversion='')
+    annotationsHtml += Template(annotationTemplate).substitute(expandosig=('sig'+str(signatureIndex)),
+                                                               annreports=sigAnnotations)
+    annIconClass = 'icon'
+
   sigMetaHtml += Template(outerSigMetaTemplate).substitute(rank=signatureIndex,
                                                            percent=("%.00f%%" % percent),
                                                            expandosig=('sig'+str(signatureIndex)),
                                                            signature=(html.escape(sig)),
                                                            iconclass=searchIconClass,
+                                                           anniconclass=annIconClass,
                                                            cslink=crashStatsHashQuery,
                                                            cssearchlink=crashStatsQuery,
                                                            clientcount=sigRecord['clientcount'],
@@ -956,6 +1003,7 @@ signatureHtml += Template(outerSigTemplate).substitute(channel=channel,
 # Add processed date to the footer
 dateTime = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
 resultFile.write(Template(mainPage).substitute(main=signatureHtml,
+                                               annotations=annotationsHtml,
                                                processeddate=dateTime))
 resultFile.close()
 

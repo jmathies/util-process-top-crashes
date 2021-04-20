@@ -6,8 +6,10 @@
   <link rel="stylesheet" href="crashstyles.css">
   <link rel="stylesheet" href="fontawesome/css/fontawesome.css">
   <link rel="stylesheet" href="fontawesome/css/solid.css">
+  <link rel="stylesheet" href="alertify/css/alertify.css">
   <style>
   </style>
+  <script type="text/javascript" src="./alertify/alertify.js"></script>
 </head>
 <body onload="onLoad()">
   <script type="text/javascript">
@@ -41,8 +43,39 @@
       }
     }
 
+    // for these functions to work, the page must be loaded via https
     function copyText(text) {
-      navigator.clipboard.writeText(text)
+      if (typeof (navigator.clipboard) == 'undefined') {
+        alertify.notify('You need to load the page vis HTTPS to gain access to the clipboard.', 'failure', 1);
+        return;
+      }
+      navigator.clipboard.writeText(text).then(function () {
+        alertify.notify('Signature text copied successfully', 'success', 1);
+      }, function () {
+        alertify.notify('Failed to copy signature text', 'failure', 1);
+      });
+    }
+
+    lastAnnotation = null;
+    function displayAnnotations(ev, annDivId) {
+      var e = document.getElementById(annDivId);
+      if (lastAnnotation != null) {
+        lastAnnotation.style.display = 'none';
+        tmp = lastAnnotation;
+        lastAnnotation = null;
+        if (e == tmp)
+          return;
+      }
+      var pageY = ev.pageY;
+      pageY += 15;
+      e.style.top = pageY + 'px';
+      if (e.style.display == 'none') {
+        e.style.display = 'block';
+        lastAnnotation = e;
+      } else {
+        e.style.display = 'none';
+        lastAnnotation - null;
+      }
     }
   </script>
 
@@ -72,9 +105,10 @@
       <div class="hdr-percent">$percent</div>
       <div class="hdr-signature"><a href='#a$expandosig'>$signature</a></div>
       <div class="hdr-rightpanel">
-        <div class="hdr-search"><span title="Copy signature to clipboard" onclick="copyText('$signature')" class="$iconclass fas fa-copy copyicon"></span></div>
+        <div class="hdr-search"><span title="View signature annotations" onclick="displayAnnotations(event, 'ann$expandosig')" class="$anniconclass fas fa-list copyicon"></span></div>
+        <div class="hdr-search"><span title="Copy signature to clipboard" onclick="copyText('$signature')" class="icon fas fa-copy copyicon"></span></div>
         <div class="hdr-search"><a href='$cslink' target="_blank" title="Find crash reports"><span class="$iconclass fas fa-fingerprint"></span></a></div>
-        <div class="hdr-search"><a href='$cssearchlink' target="_blank" title="Search for signature"><span class="$iconclass fas fa-signature"></span></a></div>
+        <div class="hdr-search"><a href='$cssearchlink' target="_blank" title="Search for signature"><span class="icon fas fa-signature"></span></a></div>
         <div class="hdr-clientcount">$clientcount</div>
         <div class="hdr-count">$count</div>
       </div>
@@ -138,6 +172,20 @@
     <!-- end of signature template -->
   </div>
   <!-- end of crash template -->
+  <!-- start of annotation template -->
+  <div id="ann$expandosig" class="annotation-container" style="display:none;">
+    <div class="ann-hdr">
+      <div class="ann-fixed-by">Fixed By</div>
+      <div class="ann-notes">Notes</div>
+    </div>
+    <!-- start of annotation report template -->
+    <div class="ann-hdr">
+      <div class="ann-fixed-by">$fixedbyversion $fixedbybug</div>
+      <div class="ann-notes">$annotations</div>
+    </div>
+    <!-- end of annotation report template -->
+  </div>
+  <!-- end of annotation template -->
   <div class="processeddate">$processeddate</div>
 </body>
 </html>
