@@ -164,7 +164,7 @@ def poll_job(s, redash_url, job):
     
   return None
 
-def getchRedashQueryResult(redash_url, query_id, api_key, params):
+def getRedashQueryResult(redash_url, query_id, api_key, params):
   s = requests.Session()
   s.headers.update({'Authorization': 'Key {}'.format(api_key)})
 
@@ -396,6 +396,9 @@ def loadAnnotations(filename):
   except FileNotFoundError:
     print("Could not find %s file." % file)
     return dict()
+  except json.decoder.JSONDecodeError:
+    print("Json error parsing %s" % file)
+    return dict()
   return annotations
 
 def escape(text):
@@ -599,7 +602,7 @@ if LoadLocally:
     dataset = json.load(f)
 else:
   with Spinner("loading from redash..."):
-    dataset = getchRedashQueryResult(jsonUrl, queryId, userKey, parameters)
+    dataset = getRedashQueryResult(jsonUrl, queryId, userKey, parameters)
   print()
   print("done.")
 

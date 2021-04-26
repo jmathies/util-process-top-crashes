@@ -1,1 +1,1 @@
-{"mozilla::layers::LockD3DTexture<T>": {"annotations": ["Check this again in a few weeks to see if it's totally gone away."], "fixedby": [{"bug": 1234567, "version": "87.0", "annotation": "Fixed!"}]}}
+{"KiRaiseUserExceptionDispatcher": {"annotations": ["Bug 1706075 - [siglist] Add KiRaiseUserExceptionDispatcher to the irrelevant list (fixed)"], "fixedby": []}}

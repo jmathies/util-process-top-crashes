@@ -22,6 +22,10 @@ def loadAnnotations(filename):
     with open(file) as database:
       annotations = json.load(database)
   except FileNotFoundError:
+    print("Could not find %s file." % file)
+    return dict()
+  except json.decoder.JSONDecodeError:
+    print("Json error parsing %s" % file)
     return dict()
   return annotations
 
