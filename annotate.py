@@ -74,18 +74,19 @@ if not newDatabase:
 signature = signature.strip("'\n \t")
 print('signature: [%s]' % signature)
 
+if annotation is None:
+  annotation = ''
+
 if fixedBy:
   if appliesToFxVersion is None or bugId is None or annotation is None:
     print("missing parameters for fixed by entry.")
     exit()
-  print("Fixed by version %s (bug#%d). annotation: '%s'" % (appliesToFxVersion, bugId, annotation))
+  print("Fixed by version '%s' in bug %d, annotation: '%s'" % (appliesToFxVersion, bugId, annotation))
 elif annotation:
   print("annotation: '%s'" %  annotation)
 else:
   exit()
 
-if annotation is None:
-  annotation = ''
 annotation = annotation.strip("'\n \t")
 
 record = dict()
