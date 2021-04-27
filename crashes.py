@@ -40,7 +40,7 @@ from fx_crash_sig.crash_processor import CrashProcessor
 
 ## TODO
 ## bugzilla search
-## rudimentary annotation support through a static json file
+## add dates to annotations
 ## battery-quarter for ooms
 ## fix the issue with signature links being temporary
 ## add copy stack feature
@@ -277,16 +277,25 @@ def processStack(frames):
     dataStack.insert(frameIndex, { 'index': frameIndex, 'frame': '', 'srcUrl': '', 'module': '' })
 
     functionCall = ''
-    normalizedFunction = ''
-    module = ''
+    module = 'unknown'
+    offset = 'unknown'
     skipFrame = False
+
+    try:
+      offset = frame['module_offset']
+    except:
+      pass
+    try:
+      module = frame['module']
+    except:
+      pass
+
+
     try:
       functionCall = frame['function']
-      normalizedFunction = frame['normalized']
     except KeyError:
-      #print("KeyError while indexing function.");
-      dataStack[frameIndex]['frame'] = "(missing function)"
-      hashData += "(missing function)"
+      dataStack[frameIndex]['frame'] = offset
+      dataStack[frameIndex]['module'] = module
       continue
     except TypeError:
       print("TypeError while indexing function.");
@@ -300,6 +309,13 @@ def processStack(frames):
 
     for v in coelesceFunctionList:
       if re.search(v, functionCall) != None:
+        normalizedFunction = functionCall
+        try:
+          normalizedFunction = frame['normalized']
+        except KeyError:
+          pass
+        except TypeError:
+          pass
         functionCall = normalizedFunction
         break
 
@@ -308,14 +324,9 @@ def processStack(frames):
         skipFrame = True
         break
 
-    try:
-      module = frame['module']
-    except:
-      pass
-
     srcUrl = generateSourceLink(frame)
 
-    dataStack[frameIndex]['srcUrl'] = srcUrl 
+    dataStack[frameIndex]['srcUrl'] = srcUrl
     dataStack[frameIndex]['frame'] = functionCall
     dataStack[frameIndex]['module'] = module
 
@@ -526,8 +537,8 @@ def generateTopReports(reports):
 def escapeBugLinks(text):
   # convert bug references to links
   # https://bugzilla.mozilla.org/show_bug.cgi?id=1323439
-  pattern = "bug ([0-9]*) "
-  replacement = "<a href='https://bugzilla.mozilla.org/show_bug.cgi?id=\\1'>\\1</a> "
+  pattern = "bug ([0-9]*)"
+  replacement = "<a href='https://bugzilla.mozilla.org/show_bug.cgi?id=\\1'>Bug \\1</a>"
   result = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
   return result
 
