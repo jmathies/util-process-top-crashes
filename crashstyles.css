@@ -1,4 +1,7 @@
-﻿body {
+﻿
+/* css crash styles for crash reports */
+
+body {
   font: 14px Helvetica, Arial, sans-serif;
 }
 
@@ -55,19 +58,19 @@ a:visited {
 .hdr-rank {
   display: inline-block;
   padding: 5px;
-  width: 5%;
+  width: 30px;
 }
 
 .hdr-percent {
   display: inline-block;
   padding: 5px;
-  width: 5%;
+  width: 30px;
 }
 
 .hdr-signature {
   display: inline-block;
   padding: 5px;
-  width: 70%;
+  max-width: 70%;
 }
 
 .hdr-search {
@@ -77,27 +80,30 @@ a:visited {
   width: 15px;
 }
 
+.oomiconclass {
+  display: inline-block;
+}
+
 .copyicon {
+  display: inline-block;
   cursor: pointer;
+}
+
+.hdr-rightpanel {
+  display: inline-block;
+  float: right;
 }
 
 .hdr-clientcount {
   display: inline-block;
   padding: 5px;
   width: 50px;
-  border: 0px solid black;
 }
 
 .hdr-count {
   display: inline-block;
   padding: 5px;
   width: 50px;
-  border: 0px solid black;
-}
-
-.hdr-rightpanel {
-  display: inline-block;
-  float: right;
 }
 
 .signature-meta {
@@ -250,7 +256,7 @@ a:visited {
 .module-name {
   display: inline-block;
   white-space: nowrap;
-  min-width: 100px;
+  min-width: 125px;
 }
 
 .stack-frame {

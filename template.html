@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>Utility Process Top Crashes</title>
-  <link rel="stylesheet" href="crashstyles.css">
+  <link rel="stylesheet" href="crashstyles.css?v=1">
   <link rel="stylesheet" href="fontawesome/css/fontawesome.css">
   <link rel="stylesheet" href="fontawesome/css/solid.css">
   <link rel="stylesheet" href="alertify/css/alertify.css">
@@ -14,6 +14,7 @@
 <body onload="onLoad()">
   <script type="text/javascript">
     function expandElement(evt, id) {
+      hideAnnotatonWindow();
       var e = document.getElementById(id);
       var clkTarget = evt.target instanceof HTMLSpanElement;
       var cancel = evt ? !clkTarget : false;
@@ -45,6 +46,7 @@
 
     // for these functions to work, the page must be loaded via https
     function copyText(text) {
+      hideAnnotatonWindow();
       if (typeof (navigator.clipboard) == 'undefined') {
         alertify.notify('You need to load the page vis HTTPS to gain access to the clipboard.', 'failure', 1);
         return;
@@ -57,16 +59,24 @@
     }
 
     lastAnnotation = null;
-    function displayAnnotations(ev, annDivId) {
-      var e = document.getElementById(annDivId);
-      if (lastAnnotation != null) {
+    function hideAnnotatonWindow() {
+      if (lastAnnotation != null)
         lastAnnotation.style.display = 'none';
+      lastAnnotation = null;
+    }
+
+    function displayAnnotations(evt, annDivId) {
+      evt.stopPropagation();
+      var e = document.getElementById(annDivId);
+      if (e == null)
+        return;
+      if (lastAnnotation != null) {
         tmp = lastAnnotation;
-        lastAnnotation = null;
+        hideAnnotatonWindow();
         if (e == tmp)
           return;
       }
-      var pageY = ev.pageY;
+      var pageY = evt.pageY;
       pageY += 15;
       e.style.top = pageY + 'px';
       if (e.style.display == 'none') {
@@ -94,6 +104,9 @@
       <div class="hdr-rightpanel">
         <div class="hdr-search"></div>
         <div class="hdr-search"></div>
+        <div class="hdr-search"></div>
+        <div class="hdr-search"></div>
+        <div class="hdr-search"></div>
         <div class="hdr-clientcount">clients</div>
         <div class="hdr-count">count</div>
       </div>
@@ -105,7 +118,8 @@
       <div class="hdr-percent">$percent</div>
       <div class="hdr-signature"><a href='#a$expandosig'>$signature</a></div>
       <div class="hdr-rightpanel">
-        <div class="hdr-search"><span title="View signature annotations" onclick="displayAnnotations(event, 'ann$expandosig')" class="$anniconclass fas fa-list copyicon"></span></div>
+        <div class="hdr-search"><span title="OOM Signature" class="$oomicon fas fa-battery-quarter oomiconclass"></span></div>
+        <div class="hdr-search"><span title="View signature annotations" onclick="return displayAnnotations(event, 'ann$expandosig');" class="$anniconclass fas fa-list copyicon"></span></div>
         <div class="hdr-search"><span title="Copy signature to clipboard" onclick="copyText('$signature')" class="icon fas fa-copy copyicon"></span></div>
         <div class="hdr-search"><a href='$cslink' target="_blank" title="Find crash reports"><span class="$iconclass fas fa-fingerprint"></span></a></div>
         <div class="hdr-search"><a href='$cssearchlink' target="_blank" title="Search for signature"><span class="icon fas fa-signature"></span></a></div>

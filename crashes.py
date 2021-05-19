@@ -20,6 +20,9 @@ from urllib.request import urlopen
 from urllib import request
 from datetime import datetime, timedelta
 
+# python -m pip install SomePackage
+# python.exe -m pip install --upgrade SomePackage
+
 import fx_crash_sig
 from fx_crash_sig.crash_processor import CrashProcessor
 
@@ -41,7 +44,6 @@ from fx_crash_sig.crash_processor import CrashProcessor
 ## TODO
 ## bugzilla search
 ## add dates to annotations
-## battery-quarter for ooms
 ## fix the issue with signature links being temporary
 ## add copy stack feature
 
@@ -896,11 +898,15 @@ for sig, crashcount in collection:
   reportHtml = str()
   idx = 0
   hashTotal= 0
+  oomIcon = 'noicon'
   for report in reportsToReport:
     idx = idx + 1
     if idx > MaxReportCount:
       break
     oombytes = report['oom_size'] if not None else '0'
+
+    if report['oom_size'] is not None:
+      oomIcon = 'icon'
 
     crashReason = report['crashreason']
     if (crashReason == None):
@@ -999,6 +1005,7 @@ for sig, crashcount in collection:
                                                            percent=("%.00f%%" % percent),
                                                            expandosig=('sig'+str(signatureIndex)),
                                                            signature=(html.escape(sig)),
+                                                           oomicon=oomIcon,
                                                            iconclass=searchIconClass,
                                                            anniconclass=annIconClass,
                                                            cslink=crashStatsHashQuery,
