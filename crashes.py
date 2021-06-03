@@ -13,6 +13,7 @@ import itertools
 import time
 import requests
 import math
+import string
 
 from string import Template
 from collections import Counter
@@ -42,9 +43,14 @@ from fx_crash_sig.crash_processor import CrashProcessor
 # python crashes.py -n nightly -d nightly -u https://sql.telemetry.mozilla.org -k (userapikey) -q 79354 -p process_type=gpu -p version=89 -p channel=nightly
 
 ## TODO
+## sort report by client and crash counts
+## shifting client id reports across versions so that data persists across releases?
+##  - version data is in the hash, but the signature remains the same, as such signatures are itemized on a per version basis.
+##  - need the ability to regenerate hashes for processed reports? The hash needs to update when we shift to a new signature
+##  - graphing over time for signatures that spans multiple versions
+
 ## bugzilla search
 ## add dates to annotations
-## fix the issue with signature links being temporary
 ## add copy stack feature
 
 ###########################################################
@@ -425,8 +431,28 @@ def checkCrashAge(dateStr):
   oldestDate = datetime.today() - timedelta(days=7)
   return (date >= oldestDate)
 
-def purgeOldReports(reports):
-  # Purge signatures that are outdated
+def purgeOldReports(reports, fxVersion):
+  # Purge obsolete reports. Note versions are included in the signature
+  # hash, so minor version differences show up as different signatures.
+  # 89.0b7 89.0 90.0.1
+  totalReportsDropped = 0
+  for sig in reports:
+    keepRepList = list()
+    origRepLen = len(reports[sig]['reportList'])
+    for report in reports[sig]['reportList']:
+      reportVer = ''
+      try:
+        reportVer = report['firefoxver']
+        reportVer = reportVer[0:2]
+      except:
+        pass
+      if fxVersion == reportVer:
+        keepRepList.append(report)
+    totalReportsDropped += (origRepLen - len(keepRepList))
+    reports[sig]['reportList'] = keepRepList
+  print("Removed %d older reports." % totalReportsDropped)
+
+  # Purge signatures that have no reports
   delSigList = list()
   for sig in reports:
     newRepList = list()
@@ -547,6 +573,12 @@ def escapeBugLinks(text):
 def createBugLink(id):
   # convert bug references to links
   return "<a href='https://bugzilla.mozilla.org/show_bug.cgi?id=" + str(id) + "'>bug " + str(id) + "</a>"
+
+safe = string.ascii_letters + string.digits + '_-.'
+
+def stringToHtmlId(s):
+    s = ''.join([letter for letter in s if letter in safe])
+    return s
 
 ###########################################################
 # Process crashes and stacks
@@ -688,15 +720,11 @@ for recrow in dataset["query_result"]["data"]["rows"]:
         # report['driverdate'] = drvDate
         # report['devdescription'] = devDesc
         # report['crashreason'] = crashReason
-        report['compositor'] = compositor
-        report['startup'] = startupCrash
+        # report['compositor'] = compositor
+        # report['startup'] = startupCrash
+        report['firefoxver'] = firefoxVer
         break
 
-  # purge old signatures of the crash reason - remove me
-  if crashReason != None:
-    index = signature.find(crashReason)
-    if index != -1:
-      found = False
   if found:
     totalCrashesProcessed += 1
     progress(totalCrashesProcessed, crashesToProcess)
@@ -709,16 +737,6 @@ for recrow in dataset["query_result"]["data"]["rows"]:
   if processSignature(signature):
     totalCrashesProcessed += 1
     continue
-
-  if crashReason != None:
-    oldSignature = signature + " - " + crashReason
-    if oldSignature in reports.keys():
-      report = reports[oldSignature]
-      del reports[oldSignature]
-      reports[signature] = report
-      print()
-      print("replaced: '" + oldSignature + "' with '" + signature + "'")
-
 
   # pull stack information for the crashing thread
   crashingThreadIndex = payload['crashing_thread']
@@ -765,7 +783,8 @@ for recrow in dataset["query_result"]["data"]["rows"]:
     'driverdate': drvDate,
     'minidumphash': minidumpHash,
     'crashreason': crashReason,
-    'startup': startupCrash
+    'startup': startupCrash,
+    'firefoxver': firefoxVer
   }
 
   # save this crash in our report list
@@ -786,7 +805,9 @@ if totalCrashesProcessed == 0:
 ###########################################################
 
 # Purge signatures that are outdated
-purgeOldReports(reports)
+purgeOldReports(reports, fxVersion)
+#sigCount, reportCount = getDatasetStats(reports)
+#print("Cache database stats: %d signatures, %d reports." % (sigCount, reportCount))
 
 # calculate unique client id counts for each signature
 clientCounts = dict()
@@ -814,7 +835,7 @@ for sig in reports:
   reports[sig]['clientcount'] = len(clientCounts[sig])
 
 if needsUpdate:
-  purgeOldReports(reports)
+  purgeOldReports(reports, fxVersion)
 
 # generate a top crash list
 sigCounter = Counter()
@@ -968,7 +989,8 @@ for sig, crashcount in collection:
     if appendAmp:
       crashStatsHashQuery += '&'
 
-  sigHtml = Template(outerReportTemplate).substitute(expandosig=('sig'+str(signatureIndex)),
+  sigHtml = Template(outerReportTemplate).substitute(# expandosig=('sig'+str(signatureIndex)),
+                                                     expandosig=stringToHtmlId(sig),
                                                      os=sigRecord['opoerating_system'],
                                                      fxver=sigRecord['firefoxVer'],
                                                      osver=sigRecord['os_version'],
@@ -1003,7 +1025,9 @@ for sig, crashcount in collection:
 
   sigMetaHtml += Template(outerSigMetaTemplate).substitute(rank=signatureIndex,
                                                            percent=("%.00f%%" % percent),
-                                                           expandosig=('sig'+str(signatureIndex)),
+                                                           # expandosig=('sig'+str(signatureIndex)),
+                                                           expandosig=stringToHtmlId(sig),
+                                                           annexpandosig=('sig'+str(signatureIndex)),
                                                            signature=(html.escape(sig)),
                                                            oomicon=oomIcon,
                                                            iconclass=searchIconClass,

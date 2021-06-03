@@ -13,16 +13,17 @@
 </head>
 <body onload="onLoad()">
   <script type="text/javascript">
-    function expandElement(evt, id) {
+
+    function expandElement(target, id, evt) {
       hideAnnotatonWindow();
-      var e = document.getElementById(id);
-      var clkTarget = evt.target instanceof HTMLSpanElement;
-      var cancel = evt ? !clkTarget : false;
-      if (cancel && evt) {
+      var isSpan = target instanceof HTMLSpanElement;
+      var isDiv = target instanceof HTMLDivElement;
+      var isHref = target instanceof HTMLAnchorElement;
+      if (isHref && evt)
         evt.preventDefault();
-      }
-      if (!clkTarget) {
-        if (e.style.display == 'none') {
+      if (!isSpan) {
+        var e = document.getElementById(id);
+        if (e.style.display == 'none' || e.style.display == '') {
           e.style.display = 'block';
         } else {
           e.style.display = 'none';
@@ -39,8 +40,10 @@
 
     function onLoad() {
       var anchor = getAnchor();
+      var e = document.getElementById(anchor);
+      //alert(anchor);
       if (anchor != null) {
-        expandElement(null, anchor.substr(1));
+        expandElement(e, anchor.substring(1));
       }
     }
 
@@ -113,13 +116,13 @@
     </div>
 
     <!-- start of signature template -->
-    <div class="signature" onclick="expandElement(event, '$expandosig');" id="a$expandosig">
+    <div class="signature" onclick="expandElement(event.target, '$expandosig', event);" id="a$expandosig">
       <div class="hdr-rank">$rank</div>
       <div class="hdr-percent">$percent</div>
       <div class="hdr-signature"><a href='#a$expandosig'>$signature</a></div>
       <div class="hdr-rightpanel">
         <div class="hdr-search"><span title="OOM Signature" class="$oomicon fas fa-battery-quarter oomiconclass"></span></div>
-        <div class="hdr-search"><span title="View signature annotations" onclick="return displayAnnotations(event, 'ann$expandosig');" class="$anniconclass fas fa-list copyicon"></span></div>
+        <div class="hdr-search"><span title="View signature annotations" onclick="return displayAnnotations(event, 'ann$annexpandosig');" class="$anniconclass fas fa-list copyicon"></span></div>
         <div class="hdr-search"><span title="Copy signature to clipboard" onclick="copyText('$signature')" class="icon fas fa-copy copyicon"></span></div>
         <div class="hdr-search"><a href='$cslink' target="_blank" title="Find crash reports"><span class="$iconclass fas fa-fingerprint"></span></a></div>
         <div class="hdr-search"><a href='$cssearchlink' target="_blank" title="Search for signature"><span class="icon fas fa-signature"></span></a></div>
@@ -129,7 +132,7 @@
     </div>
     <!-- start of signature meta template -->
     <div style="display:none;" id="$expandosig">
-      <div class="signature-meta" onclick="expandElement(event, '$expandosig');">
+      <div class="signature-meta" onclick="expandElement(event.target, '$expandosig');">
         <div class="signature-meta-left">
           <div class="meta-title">Operating System</div><div class="meta-data">$os</div><br />
           <div class="meta-title">Firefox Version</div><div class="meta-data">$fxver</div><br />
@@ -156,9 +159,9 @@
       </div>
       <!-- start of report template -->
       <div class="report">
-        <div class="report-meta" onclick="expandElement(event, '$expandostack');">
+        <div class="report-meta" onclick="expandElement(event.target, '$expandostack');">
           <div class="report-meta-data-index">$rindex</div>
-          <div class="report-meta-data-meta"><a target="_blank" title="View meta data on redash" href="$infolink"><span class="icon fas fa-external-link-alt"></span></a><span class="$startupiconclass fas fa-rocket"></span></div>
+          <div class="report-meta-data-meta"><a target="_blank" title="View meta data on redash" href="$infolink"><span class="icon fas fa-external-link-alt"></span></a> <span class="$startupiconclass fas fa-rocket"></span></div>
           <div class="report-meta-data-compositor">$compositor</div>
           <div class="report-meta-data-short">$oomsize</div>
           <div class="report-meta-data-long">$description</div>

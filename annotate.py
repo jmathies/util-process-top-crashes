@@ -9,6 +9,19 @@ import re
 import html
 import pprint
 
+###########################################################
+# Usage
+###########################################################
+# -s (signature)      : signature to annotate
+# -a (annotation)     : simple text based note. bugzilla references
+#                       will automatically get linked.
+# -c                  : clear any existing data in the database
+# -f (bug#)           : add a fixed by bug # annotation
+# -v (version)        : fixed by annotation firefox version ex: '89.0'
+#
+# examples:
+# python annotate.py -s "draw_quad_spans<T>" -a "filed Bug 1712938"
+
 pp = pprint.PrettyPrinter(indent=2)
 
 def saveAnnotations(ann, filename):
