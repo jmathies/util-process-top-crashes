@@ -14,12 +14,13 @@ import time
 import requests
 import math
 import string
+import pygal
 
 from string import Template
 from collections import Counter
 from urllib.request import urlopen
 from urllib import request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 # python -m pip install SomePackage
 # python.exe -m pip install --upgrade SomePackage
@@ -40,21 +41,29 @@ from fx_crash_sig.crash_processor import CrashProcessor
 # -d (name)     : local html output filename to use (excluding extension)
 # -c (count)    : number of reports to process, overrides the default
 # -p (k=v)      : k=v redash query parameters to pass to the query request.
+# -z            : debugging: load and dump the first few records of the local databases. requires -d.
+# -s (sig)      : search for a token in reports
 # python crashes.py -n nightly -d nightly -u https://sql.telemetry.mozilla.org -k (userapikey) -q 79354 -p process_type=gpu -p version=89 -p channel=nightly
 
 ## TODO
-## sort report by client and crash counts
-## shifting client id reports across versions so that data persists across releases?
-##  - version data is in the hash, but the signature remains the same, as such signatures are itemized on a per version basis.
-##  - need the ability to regenerate hashes for processed reports? The hash needs to update when we shift to a new signature
-##  - graphing over time for signatures that spans multiple versions
-
-## bugzilla search
+## linux distro information someplace
+## fission reporting? at least report it via an indicator.
+## filter graphing and the list based on clicks on the header data (version, os, arch)
+## popup panel layout (Fixed By and Notes) is confusing, and wide when it doesn't need to be.
+## improve signature header information layout, particular fx version numbers. We can easily expand this down and host info similar to crash stats summary pages.
+## Remove reliance on version numbers? Need to get signature headers hooked up, and choose the latest releases for main reports
+## build id (nightly / beta)
+## clean up the startup crash icons
+## better annotations support
 ## add dates to annotations
-## add copy stack feature
+## add copy stack feature in the template
+## click handler should ignore clicks if there's selection in the page
+## signature search?
+
+# python crashes.py -n beta -d beta -u https://sql.telemetry.mozilla.org -k nc2gV50AtsZHUpfmPwtR0F9ysiD8SateThgXUEba -q 79354 -p process_type=gpu -p version=90 -p channel=beta -s "draw_quad_spans<T>"
 
 ###########################################################
-# Global consts
+# Globals
 ###########################################################
 
 # The default symbolication server to use.
@@ -70,27 +79,20 @@ MostCommonLength = 50
 # When generating a report, signatures with crash counts
 # lower than this value will not be included in the report.
 MinCrashCount = 1
+# When generating a report, signatures with client counts
+# lower than this value will not be included in the report.
+ReportLowerClientLimit = 2 # filter out single client crashes
 # Maximum number of crash reports to include for each signature
 # in the final report. Limits the size of the resulting html.
-MaxReportCount = 30
+MaxReportCount = 100
 # Set to True to target a local json file for testing
 LoadLocally = False
 LocalJsonFile = "GPU_Raw_Crash_Data_2021_03_19.json"
-# Report analysis type - 0 = graphics, 1 = media. Controsl what
-# we use in identifying unique signatures.
-ReportType = 0 # currently not used
 # Default json file url if not specified via the command line.
 jsonUrl = "https://sql.telemetry.mozilla.org/api/queries/78997/results.json?api_key=0XTUThlCYJLBQaKsc8cR4296Y6fasm8vezkZSNPg"
-# Default report output filename if not specified via
-# the command line.
-outputFilename = "output" #.html
-# Default filename for the crash stack cache file if
-# not specified via the command line.
-dbFilename = "crashreports" #.json
-annoFilename = "annotations"
 
 proc = CrashProcessor(MaxStackDepth, SymbolServerUrl)
-pp = pprint.PrettyPrinter(indent=2)
+pp = pprint.PrettyPrinter(indent=1, width=260)
 
 def symbolicate(ping):
   try:
@@ -105,6 +107,10 @@ def generateSignature(payload):
     return proc.get_signature_from_symbolicated(payload).signature
   except:
     return ""
+
+###########################################################
+# Progress indicator
+###########################################################
 
 def progress(count, total, status=''):
   bar_len = 60
@@ -172,6 +178,10 @@ def poll_job(s, redash_url, job):
     
   return None
 
+###########################################################
+# Redash queries
+###########################################################
+
 def getRedashQueryResult(redash_url, query_id, api_key, params):
   s = requests.Session()
   s.headers.update({'Authorization': 'Key {}'.format(api_key)})
@@ -207,6 +217,32 @@ def getRedashQueryResult(redash_url, query_id, api_key, params):
       raise Exception('Failed getting results. (Check your redash query for errors.) statuscode=%d' % response.status_code)
 
   return response.json()
+
+###########################################################
+# HTML and Text Formatting Utilities
+###########################################################
+
+def escapeBugLinks(text):
+  # convert bug references to links
+  # https://bugzilla.mozilla.org/show_bug.cgi?id=1323439
+  pattern = "bug ([0-9]*)"
+  replacement = "<a href='https://bugzilla.mozilla.org/show_bug.cgi?id=\\1'>Bug \\1</a>"
+  result = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+  return result
+
+def createBugLink(id):
+  # convert bug references to links
+  return "<a href='https://bugzilla.mozilla.org/show_bug.cgi?id=" + str(id) + "'>bug " + str(id) + "</a>"
+
+safe = string.ascii_letters + string.digits + '_-.'
+
+def stripWhitespace(text):
+  text = text.strip(' \t\n')
+  return text
+
+def stringToHtmlId(s):
+    s = ''.join([letter for letter in s if letter in safe])
+    return s
 
 def generateSourceLink(frame):
   # examples:
@@ -249,6 +285,13 @@ def generateSourceLink(frame):
 
   return srcUrl
 
+def escape(text):
+  return html.escape(text)
+
+###########################################################
+# Crash Report Utilities
+###########################################################
+
 def processStack(frames):
   # Normalized function names we can consider the same in calculating
   # unique reports. We replace the regex match with the key using sub.
@@ -262,15 +305,7 @@ def processStack(frames):
     'thread_start<'
     ]
 
-  # functions we igore in calculating matching hashes.
-  ignoreFunctionList = [
-    '<unknown in igd10iumd64.dll>', '<unknown in igd11dxva64.dll>', '<unknown in igdumdim64.dll>',
-    'RtlpLogHeapFailure', 'RtlpAnalyzeHeapFailure', 'RtlpFreeHeap',
-    'RtlUserThreadStart'
-    ]
-
   dataStack = list() # [idx] = { 'frame': '(frame)', 'srcUrl': '(url)' }
-  hashData = ''
 
   for frame in frames:
     frameIndex = '?'
@@ -287,7 +322,6 @@ def processStack(frames):
     functionCall = ''
     module = 'unknown'
     offset = 'unknown'
-    skipFrame = False
 
     try:
       offset = frame['module_offset']
@@ -308,7 +342,6 @@ def processStack(frames):
     except TypeError:
       print("TypeError while indexing function.");
       dataStack[frameIndex]['frame'] = "(missing function)"
-      hashData += "(missing function)"
       continue
 
     for k, v in coelesceFrameDict.items():
@@ -327,84 +360,453 @@ def processStack(frames):
         functionCall = normalizedFunction
         break
 
-    for v in ignoreFunctionList:
-      if re.search(v, functionCall) != None:
-        skipFrame = True
-        break
-
     srcUrl = generateSourceLink(frame)
 
     dataStack[frameIndex]['srcUrl'] = srcUrl
     dataStack[frameIndex]['frame'] = functionCall
     dataStack[frameIndex]['module'] = module
 
-    if skipFrame is False:
-      hashData += functionCall
+  return dataStack
 
-  #if ReportType == 0:
-  #elif ReportType == 1:
-  #else:
-  #  raise Exception('Undefined ReportType!')
+def generateSignatureHash(signature, os, osVer, arch, fxVer):
+  hashData = signature
 
   # Append any crash meta data to our hashData so it applies to uniqueness.
   # Any variance in this data will cause this signature to be broken out as
   # a separate signature in the final top crash list.
-  hashData += operatingSystem
-  hashData += operatingSystemVer
-  hashData += arch
+  #hashData += os
+  #hashData += osVer
+  #hashData += arch
+
   # The redash queries we are currently using target specific versions, so this
   # doesn't have much of an impact except on beta, where we want to see the effect
   # of beta fixes that get uplifted.
-  hashData += firefoxVer
+  #hashData += fxVer
 
-  hash = hashlib.md5(hashData.encode('utf-8')).hexdigest()
-  return hash, dataStack
+  return hashlib.md5(hashData.encode('utf-8')).hexdigest()
 
-# Cache a report to a local file under subfolder 'crashes'
-def cacheCrashes(reports):
-  os.makedirs("crashes", exist_ok=True)
-  for sig in reports:
-    for report in reports[sig]['reportList']:
-      data = json.dumps(report)
-      crashId = report['crashid']
-      file = "crashes/" + crashId + ".txt"
-      if not os.path.isfile(file):
-        with open(file, "w") as cacheEntry:
-           cacheEntry.write(data)
-
-def findCrash(crashId):
-  file = "crashes/" + crashId + ".txt"
-  return os.path.isfile(file)
+###########################################################
+# Reports data structure utilities
+###########################################################
 
 def getDatasetStats(reports):
   sigCount = len(reports)
   reportCount = 0
-  for sig in reports:
-    reportCount += len(reports[sig]['reportList'])
+  for hash in reports:
+    reportCount += len(reports[hash]['reportList'])
   return sigCount, reportCount
+
+def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, parameters):
+  print("processing %d reports" % CrashProcessMax)
+
+  props = list()
+  reports = dict()
+
+  totalCrashesProcessed = 0
+
+  # load up our database of processed crash ids
+  # returns an empty dict() if no data is loaded.
+  reports, stats = loadReports(dbFilename)
+
+  if LoadLocally:
+    with open(LocalJsonFile) as f:
+      dataset = json.load(f)
+  else:
+    with Spinner("loading from redash..."):
+      dataset = getRedashQueryResult(jsonUrl, queryId, userKey, parameters)
+    print()
+    print("done.")
+
+  crashesToProcess = len(dataset["query_result"]["data"]["rows"])
+  if  crashesToProcess > CrashProcessMax:
+    crashesToProcess = CrashProcessMax
+
+  for recrow in dataset["query_result"]["data"]["rows"]:
+    if totalCrashesProcessed == CrashProcessMax:
+      break
+
+    # pull some redash props out of the recrow. You can add these
+    # by modifying the sql query.
+    operatingSystem = recrow['normalized_os']
+    operatingSystemVer = recrow['normalized_os_version']
+    firefoxVer = recrow['display_version']
+    buildId = recrow['build_id']
+    compositor = recrow['compositor']
+    arch = recrow['arch']
+    oomSize = recrow['oom_size']
+    devVendor = recrow['vendor']
+    devGen = recrow['gen']
+    devChipset = recrow['chipset']
+    devDevice = recrow['device']
+    drvVer = recrow['driver_version']
+    drvDate = recrow['driver_date']
+    clientId = recrow['client_id']
+    devDesc = recrow['device_description']
+
+    # Load the json crash payload from recrow
+    props = json.loads(recrow["payload"])
+
+    # touch up for the crash symbolication package
+    props['stackTraces'] = props['stack_traces']
+
+    crashId = props['crash_id']
+    crashDate = props['crash_date']
+    minidumpHash = props['minidump_sha256_hash']
+    crashReason = props['metadata']['moz_crash_reason']
+    crashInfo = props['stack_traces']['crash_info']
+
+    startupCrash = int(recrow['startup_crash'])
+    fissionEnabled = int(recrow['fission_enabled'])
+
+    if crashReason != None:
+      crashReason = crashReason.strip('\n')
+
+    # Ignore crashes older than 7 days
+    if not checkCrashAge(crashDate):
+      totalCrashesProcessed += 1
+      continue
+
+    # check if the crash id is processed, if so continue
+    found = False
+    signature = ""
+    for sig in reports:
+      for report in reports[sig]['reportList']:
+        if report['crashid'] == crashId:
+          found = True
+          signature = sig
+          # if you add a new value to the sql queries, you can update
+          # the local json cache we have in memory here. Saves having
+          # to delete the file and symbolicate everything again.
+          report['fission'] = fissionEnabled
+          break
+
+    if found:
+      totalCrashesProcessed += 1
+      progress(totalCrashesProcessed, crashesToProcess)
+      continue
+  
+    # symbolicate and return payload result
+    payload = symbolicate(props)
+    signature = generateSignature(payload)
+
+    if skipProcessSignature(signature):
+      totalCrashesProcessed += 1
+      continue
+
+    # pull stack information for the crashing thread
+    try:
+      crashingThreadIndex = payload['crashing_thread']
+    except KeyError:
+      #print("KeyError on crashing_thread for report");
+      continue
+
+    threads = payload['threads']
+    
+    try:
+      frames = threads[crashingThreadIndex]['frames']
+    except IndexError:
+      print("IndexError while indexing crashing thread");
+      continue
+    except TypeError:
+      print("TypeError while indexing crashing thread");
+      continue
+
+    # build up a pretty stack
+    stack = processStack(frames)
+
+    # generate a tracking hash 
+    hash = generateSignatureHash(signature, operatingSystem, operatingSystemVer, arch, firefoxVer)
+
+    if hash not in reports.keys():
+      # Set up this signature's meta data we track in the signature header.
+      reports[hash] = {
+        'signature':          signature,
+        'operatingsystem':    [operatingSystem],
+        'osversion':          [operatingSystemVer],
+        'firefoxver':         [firefoxVer],
+        'arch':               [arch],
+        'reportList':         list()
+      }
+
+    # Update meta data we track in the report header.
+    if operatingSystem not in reports[hash]['operatingsystem']:
+      reports[hash]['operatingsystem'].append(operatingSystem)
+    if operatingSystemVer not in reports[hash]['osversion']:
+      reports[hash]['osversion'].append(operatingSystemVer)
+    if firefoxVer not in reports[hash]['firefoxver']:
+      reports[hash]['firefoxver'].append(firefoxVer)
+    if arch not in reports[hash]['arch']:
+      reports[hash]['arch'].append(arch)
+
+    # create our report with per crash meta data
+    report = {
+      'clientid':           clientId,
+      'crashid':            crashId,
+      'crashdate':          crashDate,
+      'compositor':         compositor,
+      'stack':              stack,
+      'oomsize':            oomSize,
+      'type':               crashInfo['type'],
+      'devvendor':          devVendor,
+      'devgen':             devGen,
+      'devchipset':         devChipset,
+      'devdevice':          devDevice,
+      'devdescription':     devDesc,
+      'driverversion' :     drvVer,
+      'driverdate':         drvDate,
+      'minidumphash':       minidumpHash,
+      'crashreason':        crashReason,
+      'startup':            startupCrash,
+      'fission':            fissionEnabled,
+      # Duplicated but useful if we decide to change the hashing algo
+      # and need to reprocess reports.
+      'operatingsystem':    operatingSystem,
+      'osversion':          operatingSystemVer,
+      'firefoxver':         firefoxVer,
+      'arch':               arch
+    }
+
+    # save this crash in our report list
+    reports[hash]['reportList'].append(report)
+   
+    if hash not in stats.keys():
+      stats[hash] = {
+        'signature': signature,
+        'crashdata': {}
+      }
+
+    # check to see if stats has a date entry that matches crashDate
+    if crashDate not in stats[hash]['crashdata']:
+      stats[hash]['crashdata'][crashDate] = { 'crashids': [], 'clientids':[] }
+
+    if operatingSystem not in stats[hash]['crashdata'][crashDate]:
+      stats[hash]['crashdata'][crashDate][operatingSystem] = {}
+
+    if operatingSystemVer not in stats[hash]['crashdata'][crashDate][operatingSystem]:
+      stats[hash]['crashdata'][crashDate][operatingSystem][operatingSystemVer] = {}
+
+    if arch not in stats[hash]['crashdata'][crashDate][operatingSystem][operatingSystemVer]:
+      stats[hash]['crashdata'][crashDate][operatingSystem][operatingSystemVer][arch] = {}
+
+    if firefoxVer not in stats[hash]['crashdata'][crashDate][operatingSystem][operatingSystemVer][arch]:
+      stats[hash]['crashdata'][crashDate][operatingSystem][operatingSystemVer][arch][firefoxVer] = { 'clientcount': 0, 'crashcount': 0 }
+
+    if crashId not in stats[hash]['crashdata'][crashDate]['crashids']:
+      stats[hash]['crashdata'][crashDate]['crashids'].append(crashId)
+      stats[hash]['crashdata'][crashDate][operatingSystem][operatingSystemVer][arch][firefoxVer]['crashcount'] += 1
+      if clientId not in stats[hash]['crashdata'][crashDate]['clientids']:
+        stats[hash]['crashdata'][crashDate][operatingSystem][operatingSystemVer][arch][firefoxVer]['clientcount'] += 1
+        stats[hash]['crashdata'][crashDate]['clientids'].append(clientId)
+
+    totalCrashesProcessed += 1
+
+    progress(totalCrashesProcessed, crashesToProcess)
+
+  print('\n')
+  if totalCrashesProcessed == 0:
+    print('No reports processed.')
+    exit()
+
+  # Post processing steps
+
+  # Purge signatures from our reports list that are outdated (based
+  # on crash date and version). This keeps our crash lists current,
+  # especially after a merge. Note this doesn't clear stats, just reports.
+  queryFxVersion = parameters['version']
+  purgeOldReports(reports, queryFxVersion)
+
+  # calculate unique client id counts for each signature. These are client counts
+  # associated with the current redash query, and apply only to a seven day time
+  # window. They are stored in the reports database and displayed in the top crash
+  # reports. 
+  clientCounts = dict()
+  needsUpdate = False
+  for hash in reports:
+    clientCounts[hash] = list()
+    for report in reports[hash]['reportList']:
+      clientId = report['clientid']
+      if clientId not in clientCounts[hash]:
+        clientCounts[hash].append(clientId)
+    reports[hash]['clientcount'] = len(clientCounts[hash])
+
+  return reports, stats, totalCrashesProcessed
+
+def checkCrashAge(dateStr):
+  try:
+    date = datetime.fromisoformat(dateStr)
+  except:
+    return False
+  oldestDate = datetime.today() - timedelta(days=7)
+  return (date >= oldestDate)
+
+def purgeOldReports(reports, fxVersion):
+  # Purge obsolete reports.
+  # 89.0b7 89.0 90.0.1
+  totalReportsDropped = 0
+  for hash in reports:
+    keepRepList = list()
+    origRepLen = len(reports[hash]['reportList'])
+    for report in reports[hash]['reportList']:
+      reportVer = ''
+      try:
+        reportVer = report['firefoxver']
+        reportVer = reportVer[0:2]
+      except:
+        pass
+      if fxVersion == reportVer:
+        keepRepList.append(report)
+    totalReportsDropped += (origRepLen - len(keepRepList))
+    reports[hash]['reportList'] = keepRepList
+
+  print("Removed %d older reports." % totalReportsDropped)
+
+  # Purge signatures that have no reports
+  delSigList = list()
+  for hash in reports:
+    newRepList = list()
+    for report in reports[hash]['reportList']:
+      # "crash_date":"2021-03-22"
+      dateStr = report['crashdate']
+      if checkCrashAge(dateStr):
+        newRepList.append(report)
+    reports[hash]['reportList'] = newRepList
+    if len(newRepList) == 0:
+      # add this signature to our purge list
+      delSigList.append(hash)
+
+  for hash in reports:
+    if len(reports[hash]['reportList']) == 0:
+      if hash not in delSigList:
+        delSigList.append(hash)
+
+  # purge old signatures that no longer have reports
+  # associated with them.
+  for hash in delSigList:
+    del reports[hash]
+
+  print("Removed %d older signatures from our reports database." % len(delSigList))
+
+# return true if we should skip processing this signature
+def skipProcessSignature(signature):
+  if len(signature) == 0:
+    return True
+  elif signature == 'EMPTY: no crashing thread identified':
+    return True
+  elif signature == 'EMPTY: no frame data available':
+    return True
+  elif signature == "<T>":
+    print("sig <T>")
+    return True
+
+  return False
+
+def isFissionRelated(reports):
+  isFission = True
+  for report in reports:
+    try:
+      if report['fission'] == 0:
+        isFission = False
+    except:
+      pass
+  return isFission
+
+def generateTopReportsList(reports):
+  # For certain types of reasons like RustMozCrash, organize
+  # the most common for a report list. Otherwise just dump the
+  # first MaxReportCount.
+  reasonCounter = Counter()
+  for report in reports:
+    crashReason = report['crashreason']
+    reasonCounter[crashReason] += 1
+  reportCol = reasonCounter.most_common(MaxReportCount)
+  if len(reportCol) < MaxReportCount:
+    return reports
+  colCount = len(reportCol)
+  maxReasonCount = int(math.ceil(MaxReportCount / colCount))
+  reportList = list()
+  count = 0
+  for reason, count in reportCol:
+    for report in reports:
+      if report['crashreason'] == reason:
+         reportList.append(report)
+         count += 1
+         if count > maxReasonCount:
+           break # next reason
+  return reportList
+
+def dumpDatabase(reports, annoFilename):
+  print("= Reports =======================================================================================")
+  pp.pprint(reports)
+  print("= Annotations ===================================================================================")
+  reports = loadAnnotations(annoFilename)
+  pp.pprint(reports)
+
+def doMaintenance(dbFilename):
+  exit()
+  # load up our database of processed crash ids
+  reports, stats = loadReports(dbFilename)
+
+  for hash in reports:
+    signature = reports[hash]['signature']
+    clientcount = reports[hash]['clientcount']
+
+    operatingSystem = reports[hash]['operatingsystem']
+    del reports[hash]['operatingsystem']
+    reports[hash]['operatingsystem'] = [operatingSystem]
+
+    operatingSystemVer = reports[hash]['osversion']
+    del reports[hash]['osversion']
+    reports[hash]['osversion'] = [operatingSystemVer]
+
+    firefoxVer = reports[hash]['firefoxver']
+    del reports[hash]['firefoxver']
+    reports[hash]['firefoxver'] = [firefoxVer]
+
+    arch = reports[hash]['arch']
+    del reports[hash]['arch']
+    reports[hash]['arch'] = [arch]
+
+  #dumpDatabase(reports)
+
+  # Caching of reports
+  #cacheReports(reports, stats, dbFilename)
+
+###########################################################
+# File utilities
+###########################################################
+
+# Load the local report database
+def loadReports(dbFilename):
+  reportsFile = ("%s-reports.json" % dbFilename)
+  statsFile = ("%s-stats.json" % dbFilename)
+  reports = dict()
+  stats = dict()
+  try:
+    with open(reportsFile) as database:
+      reports = json.load(database)
+  except FileNotFoundError:
+    pass
+  try:
+    with open(statsFile) as database:
+      stats = json.load(database)
+  except FileNotFoundError:
+    pass
+  sigCount, reportCount = getDatasetStats(reports)
+  print("Existing database stats: %d signatures, %d reports." % (sigCount, reportCount))
+  return reports, stats
 
 # Cache the reports database to a local json file. Speeds
 # up symbolication runs across days by avoid re-symbolicating
 # reports.
-def cacheReports(reports):
-  file = ("%s.json" % dbFilename)
-  with open(file, "w") as database:
+def cacheReports(reports, stats, dbFilename):
+  reportsFile = ("%s-reports.json" % dbFilename)
+  statsFile = ("%s-stats.json" % dbFilename)
+  with open(reportsFile, "w") as database:
       database.write(json.dumps(reports))
+  with open(statsFile, "w") as database:
+      database.write(json.dumps(stats))
   sigCount, reportCount = getDatasetStats(reports)
   print("Cache database stats: %d signatures, %d reports." % (sigCount, reportCount))
-
-# Load the local report database
-def loadReports():
-  file = ("%s.json" % dbFilename)
-  reports = dict()
-  try:
-    with open(file) as database:
-      reports = json.load(database)
-  except FileNotFoundError:
-    return dict()
-  sigCount, reportCount = getDatasetStats(reports)
-  print("Existing database stats: %d signatures, %d reports." % (sigCount, reportCount))
-  return reports
 
 def loadAnnotations(filename):
   file = "%s.json" % filename
@@ -420,56 +822,9 @@ def loadAnnotations(filename):
     return dict()
   return annotations
 
-def escape(text):
-  return html.escape(text)
-
-def checkCrashAge(dateStr):
-  try:
-    date = datetime.fromisoformat(dateStr)
-  except:
-    return False
-  oldestDate = datetime.today() - timedelta(days=7)
-  return (date >= oldestDate)
-
-def purgeOldReports(reports, fxVersion):
-  # Purge obsolete reports. Note versions are included in the signature
-  # hash, so minor version differences show up as different signatures.
-  # 89.0b7 89.0 90.0.1
-  totalReportsDropped = 0
-  for sig in reports:
-    keepRepList = list()
-    origRepLen = len(reports[sig]['reportList'])
-    for report in reports[sig]['reportList']:
-      reportVer = ''
-      try:
-        reportVer = report['firefoxver']
-        reportVer = reportVer[0:2]
-      except:
-        pass
-      if fxVersion == reportVer:
-        keepRepList.append(report)
-    totalReportsDropped += (origRepLen - len(keepRepList))
-    reports[sig]['reportList'] = keepRepList
-  print("Removed %d older reports." % totalReportsDropped)
-
-  # Purge signatures that have no reports
-  delSigList = list()
-  for sig in reports:
-    newRepList = list()
-    for report in reports[sig]['reportList']:
-      # "crash_date":"2021-03-22"
-      dateStr = report['crashdate']
-      if checkCrashAge(dateStr):
-        newRepList.append(report)
-    reports[sig]['reportList'] = newRepList
-    if len(newRepList) == 0:
-      # add this signature to our purge list
-      delSigList.append(sig)
-  # purge old signatures that no longer have reports
-  # associated with them.
-  for sig in delSigList:
-    del reports[sig]
-  print("Removed %d older signatures from our database." % len(delSigList))
+###########################################################
+# HTML Template Utilities
+###########################################################
 
 def extractTemplate(token, srcTemplate):
   # This returns the inner template from srcTemplate, minus any
@@ -504,11 +859,6 @@ def extractAndTokenizeTemplate(token, srcTemplate, insertToken):
   template = srcTemplate[sIndex + len(start) : eIndex]
   return template, (header + '$' + insertToken + footer)
 
-def stripWhitespace(text):
-  text = text.strip(' \t\n')
-  return text
-  #return text.replace('\n', '')
-
 def dumpTemplates():
   print('mainPage -----')
   print(mainPage)
@@ -524,533 +874,420 @@ def dumpTemplates():
   print(innerStackTemplate)
   exit()
 
-# return true if we should skip processing this signature
-def processSignature(signature):
-  if len(signature) == 0:
-    return True
-  elif signature == 'EMPTY: no crashing thread identified':
-    return True
-  elif signature == 'EMPTY: no frame data available':
-    return True
-  elif signature == "<T>":
-    print("sig <T>")
-    return True
+###########################################################
+### Report generation
+###########################################################
 
-  return False
+def generateSignatureReport(signature):
+  reports, stats = loadReports()
+  reports = reports[sig]
+  if len(reports) == 0:
+    print("signature not found in database.")
+    exit()
 
-def generateTopReports(reports):
-  # For certain types of reasons like RustMozCrash, organize
-  # the most common for a report list. Otherwise just dump the
-  # first MaxReportCount.
-  reasonCounter = Counter()
-  for report in reports:
-    crashReason = report['crashreason']
-    reasonCounter[crashReason] += 1
-  reportCol = reasonCounter.most_common(MaxReportCount)
-  if len(reportCol) < MaxReportCount:
-    return reports
-  colCount = len(reportCol)
-  maxReasonCount = int(math.ceil(MaxReportCount / colCount))
-  reportList = list()
-  count = 0
-  for reason, count in reportCol:
-    for report in reports:
-      if report['crashreason'] == reason:
-         reportList.append(report)
-         count += 1
-         if count > maxReasonCount:
-           break # next reason
-  return reportList
+  #for report in reports:
+  exit()
+    
+def generateSparklineJS(sigStats, operatingSystems, operatingSystemVers, firefoxVers, archs, className):
+  # generate stats data for crash rate over time graphs
+  #   data = [ {name: "Bitcoin", date: "2017-01-01", value: 967.6}, ]
+  #"Windows": {
+  #  "6.1": {
+  #    "x86": {
+  #      "91.0a1": {
+  #        "clientcount": 1,
+  #        "crashcount": 3
+  #      }
+  #    }
+  #  }
+  #}
 
-def escapeBugLinks(text):
-  # convert bug references to links
-  # https://bugzilla.mozilla.org/show_bug.cgi?id=1323439
-  pattern = "bug ([0-9]*)"
-  replacement = "<a href='https://bugzilla.mozilla.org/show_bug.cgi?id=\\1'>Bug \\1</a>"
-  result = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-  return result
+  rawData = dict()
+  for dateStr in sigStats['crashdata']:
+    for os in operatingSystems:
+      for osver in operatingSystemVers:
+        for arch in archs:
+          for fxver in firefoxVers:
+            try:
+              stats = sigStats['crashdata'][dateStr][os][osver][arch][fxver]
+              rawData[dateStr] = { 'os': os, 'crashcount': stats['crashcount'] }
+            except:
+              pass # some dates may not apply to a particular combination
 
-def createBugLink(id):
-  # convert bug references to links
-  return "<a href='https://bugzilla.mozilla.org/show_bug.cgi?id=" + str(id) + "'>bug " + str(id) + "</a>"
+  # average data for each os to smooth out the graph
+  # {name: "Windows", date: "2021-06-24", value: 84}
 
-safe = string.ascii_letters + string.digits + '_-.'
+  # generate a list of dates
+  avgData = dict()
+  dates = list(rawData.keys())
+  dates.sort()
 
-def stringToHtmlId(s):
-    s = ''.join([letter for letter in s if letter in safe])
-    return s
+  # generate an os list [not used]
+  osList = list()
+  for targetDate in dates:
+    os = rawData[targetDate]['os']
+    if os not in osList:
+      osList.append(os)
+
+  # generate plot data
+  plotData = '['
+  template = '{name: "$name", date: "$date", value: $value},'
+
+  for targetDate in dates:
+    pd = date.fromisoformat(targetDate)
+    minDate = pd - timedelta(3)
+    maxDate = pd + timedelta(4)
+    crashCount = 0
+    dataPoints = 0
+
+    for tmpDateStr in dates:
+      tmpDate = date.fromisoformat(tmpDateStr)
+      if tmpDate >= minDate and tmpDate <= maxDate:
+        crashCount += rawData[pd.isoformat()]['crashcount']
+        dataPoints += 1
+
+    if dataPoints == 0:
+      avgData[targetDate] = 0
+    else:
+      avgData[targetDate] = crashCount / dataPoints
+
+    #print("date:%s cc=%d dp=%d avg=%f" % (targetDate, crashCount, dataPoints, avgData[targetDate]))
+    plotData += Template(template).substitute(name='All', date=targetDate, value=avgData[targetDate])
+
+  plotData += ']'
+  #print(plotData)
+  template = 'sparkline(document.querySelector("$cname"), $data, sloptions);' ## sloptions defined in template.html
+  return Template(template).substitute(data=plotData, cname='.' + className)
+
+# from list of strings, return a comma separated pretty list
+def getItemizedHeaderList(theList):
+  result = ''
+  sl = theList.sort()
+  for s in theList:
+    result += s + ', '
+  return result.strip(' ,')
+
+def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
+                           channel, queryFxVersion, outputFilename, annoFilename):
+
+  templateFile = open("template.html", "r")
+  template = templateFile.read()
+  templateFile.close()
+
+  # <!-- start of crash template -->
+  # <!-- end of crash template -->
+  innerTemplate, mainPage = extractAndTokenizeTemplate('crash', template, 'main')
+  annotationTemplate, mainPage = extractAndTokenizeTemplate('annotation', mainPage, 'annotations')
+  annotationReport, annotationTemplate = extractAndTokenizeTemplate('annotation report', annotationTemplate, 'annreports')
+
+  # <!-- start of signature template -->
+  # <!-- end of signature template -->
+  innerSigTemplate, outerSigTemplate = extractAndTokenizeTemplate('signature', innerTemplate, 'signature')
+
+  # Main inner block
+  # <!-- start of signature meta template -->
+  # <!-- end of signature meta template -->
+  innerSigMetaTemplate, outerSigMetaTemplate = extractAndTokenizeTemplate('signature meta', innerSigTemplate, 'reports')
+
+  # Report meta plus stack info
+  # <!-- start of report template -->
+  # <!-- end of report template -->
+  innerReportTemplate, outerReportTemplate = extractAndTokenizeTemplate('report', innerSigMetaTemplate, 'report')
+
+  # <!-- start of stackline template -->
+  # <!-- end of stackline template -->
+  innerStackTemplate, outerStackTemplate = extractAndTokenizeTemplate('stackline', innerReportTemplate, 'stackline')
+
+  outerStackTemplate = stripWhitespace(outerStackTemplate)
+  innerStackTemplate = stripWhitespace(innerStackTemplate)
+  outerReportTemplate = stripWhitespace(outerReportTemplate)
+  outerSigMetaTemplate = stripWhitespace(outerSigMetaTemplate)
+  outerSigTemplate = stripWhitespace(outerSigTemplate)
+  annotationTemplate = stripWhitespace(annotationTemplate)
+  annotationReport = stripWhitespace(annotationReport)
+  # mainPage = stripWhitespace(mainPage) # mucks with js
+  annDb = loadAnnotations(annoFilename)
+
+  #resultFile = open(("%s.html" % outputFilename), "w", encoding="utf-8")
+  resultFile = open(("%s.html" % outputFilename), "w", errors="replace")
+
+  signatureHtml = str()
+  sigMetaHtml = str()
+  annotationsHtml = str()
+  signatureIndex = 0
+
+  sigCount, reportCount = getDatasetStats(reports)
+
+  # generate a top crash list
+  sigCounter = Counter()
+  for hash in reports:
+    if reports[hash]['clientcount'] < ReportLowerClientLimit:
+      continue
+    sigCounter[hash] = len(reports[hash]['reportList'])
+
+  collection = sigCounter.most_common(MostCommonLength)
+
+  sparklineJS = ''
+
+  for hash, crashcount in collection:
+    try:
+      sigRecord = reports[hash]
+    except KeyError:
+      continue
+
+    signature = sigRecord['signature']
+
+    prettyOperatingSystems = getItemizedHeaderList(sigRecord['operatingsystem'])
+    prettyOperatingSystemVers = getItemizedHeaderList(sigRecord['osversion'])
+    prettyFirefoxVers = getItemizedHeaderList(sigRecord['firefoxver'])
+    prettyArchs = getItemizedHeaderList(sigRecord['arch'])
+
+    operatingSystemsList = sigRecord['operatingsystem']
+    operatingSystemVersList = sigRecord['osversion']
+    firefoxVersList = sigRecord['firefoxver']
+    archsList = sigRecord['arch']
+
+    crashcount = len(sigRecord['reportList'])
+    percent = (crashcount / totalCrashesProcessed)*100.0
+
+    if crashcount < MinCrashCount: # Skip small crash count reports
+      continue
+
+    signatureIndex += 1
+
+    crashStatsHashQuery = 'https://crash-stats.mozilla.org/search/?'
+    crashStatsQuery = 'https://crash-stats.mozilla.org/search/?signature=~%s&product=Firefox&_facets=signature&process_type=%s' % (signature, processType)
+
+    # sort reports in this signature based on common crash reasons, so the most common
+    # is at the top of the list.
+    reportsToReport = generateTopReportsList(reports[hash]['reportList'])
+
+    fissionIcon = 'noicon'
+    if isFissionRelated(reports[hash]['reportList']):
+      fissionIcon = 'icon'
+    if crashcount < 10 and fissionIcon == 'icon':
+      fissionIcon = 'grayicon'
+
+    reportHtml = str()
+    idx = 0
+    hashTotal= 0
+    oomIcon = 'noicon'
+    for report in reportsToReport:
+      idx = idx + 1
+      if idx > MaxReportCount:
+        break
+      oombytes = report['oomsize'] if not None else '0'
+
+      if report['oomsize'] is not None:
+        oomIcon = 'icon'
+
+      crashReason = report['crashreason']
+      if (crashReason == None):
+        crashReason = ''
+
+      crashType = report['type']
+      crashType = crashType.lstrip('EXCEPTION_')
+
+      appendAmp = False
+      if hashTotal < 30: # This is all crash stats can hande (414 Request-URI Too Large)
+        try:
+          crashStatsHashQuery += 'minidump_sha256_hash=~' + report['minidumphash']
+          hashTotal += 1
+          appendAmp = True
+        except:
+          pass
+
+      # Redash meta data dump for a particular crash id
+      infoLink = 'https://sql.telemetry.mozilla.org/queries/79462?p_channel=%s&p_process_type=%s&p_version=%s&p_crash_id=%s' % (channel, processType, queryFxVersion, report['crashid'])
+
+      startupStyle = 'noicon'
+      if report['startup'] != 0:
+        startupStyle = 'icon'
+
+      stackHtml = str()
+      for frameData in report['stack']:
+        # [idx] = { 'index': n, 'frame': '(frame)', 'srcUrl': '(url)', 'module': '(module)' }
+        frameIndex = frameData['index']
+        frame = frameData['frame']
+        srcUrl = frameData['srcUrl']
+        moduleName = frameData['module']
+
+        linkStyle = 'inline-block'
+        srcLink = srcUrl
+        if len(srcUrl) == 0:
+          linkStyle = 'none'
+          srcLink = ''
+
+        stackHtml += Template(innerStackTemplate).substitute(frameindex=frameIndex,
+                                                              frame=escape(frame),
+                                                              srcurl=srcLink,
+                                                              module=moduleName,
+                                                              style=linkStyle)
+
+      reportHtml += Template(outerStackTemplate).substitute(expandostack=('st'+str(signatureIndex)+'-'+str(idx)),
+                                                            rindex=idx,
+                                                            type=crashType,
+                                                            oomsize=oombytes,
+                                                            devvendor=report['devvendor'],
+                                                            devgen=report['devgen'],
+                                                            devchipset=report['devchipset'],
+                                                            description=report['devdescription'],
+                                                            drvver=report['driverversion'],
+                                                            drvdate=report['driverdate'],
+                                                            compositor=report['compositor'],
+                                                            reason=crashReason,
+                                                            infolink=infoLink,
+                                                            startupiconclass=startupStyle,
+                                                            stackline=stackHtml)
+      if appendAmp:
+        crashStatsHashQuery += '&'
+
+    # class="svg-$expandosig"
+    sparklineJS += generateSparklineJS(stats[hash], operatingSystemsList, operatingSystemVersList, firefoxVersList, archsList, 'svg-'+stringToHtmlId(hash)) + '\n'
+
+    # svg element
+    sigHtml = Template(outerReportTemplate).substitute(expandosig=stringToHtmlId(hash),
+                                                       os=prettyOperatingSystems,
+                                                       fxver=prettyFirefoxVers,
+                                                       osver=prettyOperatingSystemVers,
+                                                       arch=prettyArchs,
+                                                       report=reportHtml)
+
+    crashStatsHashQuery = crashStatsHashQuery.rstrip('&')
+
+    searchIconClass = 'icon'
+    if hashTotal == 0:
+      crashStatsHashQuery = ''
+      searchIconClass = 'lticon'
+
+    # ann$expandosig - view signature meta parameter
+    annIconClass = 'lticon'
+    if signature in annDb:
+      arec = record = annDb[signature]
+      # record['annotations'] (list)
+      sigAnnotations = str()
+      # record['fixedby'] (list of tables, { 'version': 87, 'bug': 1234567 }
+      for fb in record['fixedby']:
+        sigAnnotations += Template(annotationReport).substitute(annotations=escape(fb['annotation']),
+                                                                fixedbybug=createBugLink(str(fb['bug'])),
+                                                                fixedbyversion=fb['version'])
+      for annotation in record['annotations']:
+        annotation = escape(annotation)
+        annotation = escapeBugLinks(annotation)
+        sigAnnotations += Template(annotationReport).substitute(annotations=annotation, fixedbybug='', fixedbyversion='')
+      annotationsHtml += Template(annotationTemplate).substitute(expandosig=('sig'+str(signatureIndex)),
+                                                                 annreports=sigAnnotations)
+      annIconClass = 'icon'
+
+    sigMetaHtml += Template(outerSigMetaTemplate).substitute(rank=signatureIndex,
+                                                             percent=("%.00f%%" % percent),
+                                                             # expandosig=('sig'+str(signatureIndex)),
+                                                             expandosig=stringToHtmlId(hash),
+                                                             annexpandosig=('sig'+str(signatureIndex)),
+                                                             signature=(html.escape(signature)),
+                                                             fissionicon=fissionIcon,
+                                                             oomicon=oomIcon,
+                                                             iconclass=searchIconClass,
+                                                             anniconclass=annIconClass,
+                                                             cslink=crashStatsHashQuery,
+                                                             cssearchlink=crashStatsQuery,
+                                                             clientcount=sigRecord['clientcount'],
+                                                             count=crashcount,
+                                                             reports=sigHtml)
+
+  signatureHtml += Template(outerSigTemplate).substitute(channel=channel,
+                                                         # version=queryFxVersion,
+                                                         process=processType,
+                                                         sigcount=sigCount,
+                                                         repcount=reportCount,
+                                                         sparkline=sparklineJS,
+                                                         signature=sigMetaHtml)
+
+  # Add processed date to the footer
+  dateTime = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
+  resultFile.write(Template(mainPage).substitute(main=signatureHtml,
+                                                 annotations=annotationsHtml,
+                                                 processeddate=dateTime))
+  resultFile.close()
 
 ###########################################################
 # Process crashes and stacks
 ###########################################################
 
-queryId = ''
-userKey = ''
-parameters = dict()
+def main():
+  global CrashProcessMax
 
-options, remainder = getopt.getopt(sys.argv[1:], 'u:n:d:c:k:q:p:t:')
-for o, a in options:
-  if o == '-u':
-    jsonUrl = a
-    print("data source url: %s" %  jsonUrl)
-  elif o == '-n':
-    outputFilename = a
-    print("output filename: %s.html" %  outputFilename)
-  elif o == '-d':
-    dbFilename = a
-    print("local cache file: %s.json" %  dbFilename)
-  elif o == '-c':
-    CrashProcessMax = int(a)
-  elif o == '-q':
-    queryId = a
-    print("query id: %s" %  queryId)
-  elif o == '-k':
-    userKey = a
-    print("user key: %s" %  userKey)
-  elif o == '-t':
-    repType = '?'
-    if a == 'media':
-      ReportType = 1
-      repType = 'Media'
-    else:
-      ReportType = 0
-      repType = 'Graphics'
-    print("analysis type: %s" %  repType)
-  elif o == '-p':
-    param = a.split('=')
-    parameters[param[0]] = param[1]
+  queryId = ''
+  userKey = ''
+  targetSignature = ''
 
-if len(userKey) == 0:
-  print("missing user api key.")
-  exit()
-elif len(queryId) == 0:
-  print("missing query id.")
-  exit()
+  dbFilename = "crashreports" #.json
+  annoFilename = "annotations"
 
-parameters['crashcount'] = str(CrashProcessMax)
-channel = parameters['channel']
-fxVersion = parameters['version']
-processType = parameters['process_type']
+  parameters = dict()
 
-print("processing %d reports" % CrashProcessMax)
+  options, remainder = getopt.getopt(sys.argv[1:], 'u:n:d:c:k:q:p:s:zm')
+  for o, a in options:
+    if o == '-u':
+      jsonUrl = a
+      print("data source url: %s" %  jsonUrl)
+    elif o == '-n':
+      outputFilename = a
+      print("output filename: %s.html" %  outputFilename)
+    elif o == '-d':
+      dbFilename = a
+      print("local cache file: %s.json" %  dbFilename)
+    elif o == '-c':
+      CrashProcessMax = int(a)
+    elif o == '-q':
+      queryId = a
+      print("query id: %s" %  queryId)
+    elif o == '-k':
+      userKey = a
+      print("user key: %s" %  userKey)
+    elif o == '-s':
+      targetSignature = a
+      print("target signature: %s" %  targetSignature)
+    elif o == '-m':
+      print("calling maintenance function.")
+      doMaintenance(dbFilename)
+      exit()
+    elif o == '-p':
+      param = a.split('=')
+      parameters[param[0]] = param[1]
+    elif o == '-z':
+      reports, stats = loadReports(dbFilename)
+      dumpDatabase(reports)
+      exit()
 
-props = list()
-reports = dict()
+  if len(userKey) == 0:
+    print("missing user api key.")
+    exit()
+  elif len(queryId) == 0:
+    print("missing query id.")
+    exit()
 
-totalCrashesProcessed = 0
+  parameters['crashcount'] = str(CrashProcessMax)
 
-# load up our database of processed crash ids
-reports = loadReports()
+  if len(targetSignature) > 0:
+    print("analyzing '%s'" % targetSignature)
+    generateSignatureReport(targetSignature)
+    exit()
 
-if LoadLocally:
-  with open(LocalJsonFile) as f:
-    dataset = json.load(f)
-else:
-  with Spinner("loading from redash..."):
-    dataset = getRedashQueryResult(jsonUrl, queryId, userKey, parameters)
-  print()
-  print("done.")
+  # Pull fresh data from redash and process it
+  reports, stats, totalCrashesProcessed = processRedashDataset(dbFilename, jsonUrl, queryId, userKey, parameters)
 
-crashesToProcess = len(dataset["query_result"]["data"]["rows"])
-if  crashesToProcess > CrashProcessMax:
-  crashesToProcess = CrashProcessMax
+  # Caching of reports
+  cacheReports(reports, stats, dbFilename)
 
-for recrow in dataset["query_result"]["data"]["rows"]:
-  if totalCrashesProcessed == CrashProcessMax:
-    break
+  processType = parameters['process_type']
+  channel = parameters['channel']
+  queryFxVersion = parameters['version']
 
-  # pull some redash props out of the recrow. You can add these
-  # by modifying the sql query.
-  operatingSystem = recrow['normalized_os']
-  operatingSystemVer = recrow['normalized_os_version']
-  firefoxVer = recrow['display_version']
-  buildId = recrow['build_id']
-  compositor = recrow['compositor']
-  arch = recrow['arch']
-  oom_size = recrow['oom_size']
-  devVendor = recrow['vendor']
-  devGen = recrow['gen']
-  devChipset = recrow['chipset']
-  devDevice = recrow['device']
-  drvVer = recrow['driver_version']
-  drvDate = recrow['driver_date']
-  clientId = recrow['client_id']
-  devDesc = recrow['device_description']
+  generateTopCrashReport(reports, stats, totalCrashesProcessed, processType, channel,
+                         queryFxVersion, outputFilename, annoFilename)
 
-  # Load the json crash payload from recrow
-  props = json.loads(recrow["payload"])
-
-  # touch up for the crash symbolication package
-  props['stackTraces'] = props['stack_traces']
-
-  crashId = props['crash_id']
-  crashDate = props['crash_date']
-  minidumpHash = props['minidump_sha256_hash']
-  crashReason = props['metadata']['moz_crash_reason']
-  crashInfo = props['stack_traces']['crash_info']
-
-  startupCrash = 0
-  try:
-    startupCrash = int(props['metadata']['startup_crash'])
-  except:
-    pass
-
-  if crashReason != None:
-    crashReason = crashReason.strip('\n')
-
-  # Ignore crashes older than 7 days
-  if not checkCrashAge(crashDate):
-    totalCrashesProcessed += 1
-    continue
-
-  # check if the crash id is processed, if so continue
-  found = False
-  signature = ""
-  for sig in reports:
-    for report in reports[sig]['reportList']:
-      if report['crashid'] == crashId:
-        found = True
-        signature = sig
-        # if you add a new value to the sql queries, you can update
-        # the local json cache we have in memory here. Saves having
-        # to delete the file and symbolicate everything again.
-        # report['clientid'] = clientId
-        # report['minidumphash'] = minidumpHash
-        # report['driverversion'] = drvVer
-        # report['driverdate'] = drvDate
-        # report['devdescription'] = devDesc
-        # report['crashreason'] = crashReason
-        # report['compositor'] = compositor
-        # report['startup'] = startupCrash
-        report['firefoxver'] = firefoxVer
-        break
-
-  if found:
-    totalCrashesProcessed += 1
-    progress(totalCrashesProcessed, crashesToProcess)
-    continue
-  
-  # symbolicate and return payload result
-  payload = symbolicate(props)
-  signature = generateSignature(payload)
-
-  if processSignature(signature):
-    totalCrashesProcessed += 1
-    continue
-
-  # pull stack information for the crashing thread
-  crashingThreadIndex = payload['crashing_thread']
-  threads = payload['threads']
-  try:
-    frames = threads[crashingThreadIndex]['frames']
-  except IndexError:
-    print("IndexError while indexing crashing thread");
-    continue
-  except TypeError:
-    print("TypeError while indexing crashing thread");
-    continue
-
-  # build up a pretty stack and generate a hash of it
-  hash, stack = processStack(frames)
-
-  if signature not in reports.keys():
-    reports[signature] = {'hashList':list(), 'reportList':list()}
-
-  # save the meta data encorporated into our hash we use for uniqueness. This is displayed
-  # in the signature meta data header.
-  if (hash not in reports[signature]['hashList']):
-    reports[signature]['hashList'].append(hash)
-    reports[signature]['opoerating_system'] = operatingSystem
-    reports[signature]['arch'] = arch
-    reports[signature]['os_version'] = operatingSystemVer
-    reports[signature]['firefoxVer'] = firefoxVer
-
-  # create our report with per crash meta data
-  report = {
-    'clientid': clientId,
-    'crashid': crashId,
-    'crashdate': crashDate,
-    'compositor': compositor,
-    'stack': stack,
-    'oom_size': oom_size,
-    'type': crashInfo['type'],
-    'devvendor': devVendor,
-    'devgen': devGen,
-    'devchipset': devChipset,
-    'devdevice': devDevice,
-    'devdescription': devDesc,
-    'driverversion' : drvVer,
-    'driverdate': drvDate,
-    'minidumphash': minidumpHash,
-    'crashreason': crashReason,
-    'startup': startupCrash,
-    'firefoxver': firefoxVer
-  }
-
-  # save this crash in our report list
-  reports[signature]['reportList'].append(report)
-
-  totalCrashesProcessed += 1
-
-  progress(totalCrashesProcessed, crashesToProcess)
-
-print('\n')
-
-if totalCrashesProcessed == 0:
-  print('No reports processed.')
   exit()
 
-###########################################################
-# Post processing steps
-###########################################################
-
-# Purge signatures that are outdated
-purgeOldReports(reports, fxVersion)
-#sigCount, reportCount = getDatasetStats(reports)
-#print("Cache database stats: %d signatures, %d reports." % (sigCount, reportCount))
-
-# calculate unique client id counts for each signature
-clientCounts = dict()
-needsUpdate = False
-for sig in reports:
-  # maintenence, we moved compositor into individual reports - remove me
-  try:
-    del reports[sig]['compositor']
-  except KeyError:
-    pass
-  clientCounts[sig] = list()
-  for report in reports[sig]['reportList']:
-    try:
-      test = report['devdescription']
-      test = report['compositor']
-      test = report['startup']
-    except:
-      # purge records when we update the local db
-      report['crashdate'] = "2020-01-01"
-      needsUpdate = True
-      continue
-    clientId = report['clientid']
-    if clientId not in clientCounts[sig]:
-      clientCounts[sig].append(clientId)
-  reports[sig]['clientcount'] = len(clientCounts[sig])
-
-if needsUpdate:
-  purgeOldReports(reports, fxVersion)
-
-# generate a top crash list
-sigCounter = Counter()
-for sig in reports:
-  sigCounter[sig] = len(reports[sig]['reportList'])
-
-
-###########################################################
-### HTML generation
-###########################################################
-
-templateFile = open("template.html", "r")
-template = templateFile.read()
-templateFile.close()
-
-# <!-- start of crash template -->
-# <!-- end of crash template -->
-innerTemplate, mainPage = extractAndTokenizeTemplate('crash', template, 'main')
-annotationTemplate, mainPage = extractAndTokenizeTemplate('annotation', mainPage, 'annotations')
-annotationReport, annotationTemplate = extractAndTokenizeTemplate('annotation report', annotationTemplate, 'annreports')
-
-# <!-- start of signature template -->
-# <!-- end of signature template -->
-innerSigTemplate, outerSigTemplate = extractAndTokenizeTemplate('signature', innerTemplate, 'signature')
-
-# Main inner block
-# <!-- start of signature meta template -->
-# <!-- end of signature meta template -->
-innerSigMetaTemplate, outerSigMetaTemplate = extractAndTokenizeTemplate('signature meta', innerSigTemplate, 'reports')
-
-# Report meta plus stack info
-# <!-- start of report template -->
-# <!-- end of report template -->
-innerReportTemplate, outerReportTemplate = extractAndTokenizeTemplate('report', innerSigMetaTemplate, 'report')
-
-# <!-- start of stackline template -->
-# <!-- end of stackline template -->
-innerStackTemplate, outerStackTemplate = extractAndTokenizeTemplate('stackline', innerReportTemplate, 'stackline')
-
-outerStackTemplate = stripWhitespace(outerStackTemplate)
-innerStackTemplate = stripWhitespace(innerStackTemplate)
-outerReportTemplate = stripWhitespace(outerReportTemplate)
-outerSigMetaTemplate = stripWhitespace(outerSigMetaTemplate)
-outerSigTemplate = stripWhitespace(outerSigTemplate)
-annotationTemplate = stripWhitespace(annotationTemplate)
-annotationReport = stripWhitespace(annotationReport)
-# mainPage = stripWhitespace(mainPage) # mucks with js
-annDb = loadAnnotations(annoFilename)
-
-#resultFile = open(("%s.html" % outputFilename), "w", encoding="utf-8")
-resultFile = open(("%s.html" % outputFilename), "w", errors="replace")
-
-signatureHtml = str()
-sigMetaHtml = str()
-annotationsHtml = str()
-signatureIndex = 0
-
-sigCount, reportCount = getDatasetStats(reports)
-collection = sigCounter.most_common(MostCommonLength)
-
-for sig, crashcount in collection:
-  try:
-    sigRecord = reports[sig]
-  except KeyError:
-    continue
-
-  crashcount = len(sigRecord['reportList'])
-  percent = (crashcount / totalCrashesProcessed)*100.0
-
-  if crashcount < MinCrashCount: # Skip small crash count reports
-    continue
-
-  signatureIndex += 1
-
-  crashStatsHashQuery = 'https://crash-stats.mozilla.org/search/?'
-  crashStatsQuery = 'https://crash-stats.mozilla.org/search/?signature=~%s&product=Firefox&_facets=signature&process_type=%s' % (sig, processType)
-
-  # sort based on common reasons
-  reportsToReport = generateTopReports(reports[sig]['reportList'])
-
-  reportHtml = str()
-  idx = 0
-  hashTotal= 0
-  oomIcon = 'noicon'
-  for report in reportsToReport:
-    idx = idx + 1
-    if idx > MaxReportCount:
-      break
-    oombytes = report['oom_size'] if not None else '0'
-
-    if report['oom_size'] is not None:
-      oomIcon = 'icon'
-
-    crashReason = report['crashreason']
-    if (crashReason == None):
-      crashReason = ''
-
-    crashType = report['type']
-    crashType = crashType.lstrip('EXCEPTION_')
-
-    appendAmp = False
-    try:
-      crashStatsHashQuery += 'minidump_sha256_hash=~' + report['minidumphash']
-      hashTotal += 1
-      appendAmp = True
-    except:
-      pass
-
-    # Redash meta data dump for a particular crash id
-    infoLink = 'https://sql.telemetry.mozilla.org/queries/79462?p_channel=%s&p_process_type=%s&p_version=%s&p_crash_id=%s' % (channel, processType, fxVersion, report['crashid'])
-
-    startupStyle = 'noicon'
-    if report['startup'] != 0:
-      startupStyle = 'icon'
-
-    stackHtml = str()
-    for frameData in report['stack']:
-      # [idx] = { 'index': n, 'frame': '(frame)', 'srcUrl': '(url)', 'module': '(module)' }
-      frameIndex = frameData['index']
-      frame = frameData['frame']
-      srcUrl = frameData['srcUrl']
-      moduleName = frameData['module']
-
-      linkStyle = 'inline-block'
-      srcLink = srcUrl
-      if len(srcUrl) == 0:
-        linkStyle = 'none'
-        srcLink = ''
-
-      stackHtml += Template(innerStackTemplate).substitute(frameindex=frameIndex,
-                                                            frame=escape(frame),
-                                                            srcurl=srcLink,
-                                                            module=moduleName,
-                                                            style=linkStyle)
-
-    reportHtml += Template(outerStackTemplate).substitute(expandostack=('st'+str(signatureIndex)+'-'+str(idx)),
-                                                          rindex=idx,
-                                                          type=crashType,
-                                                          oomsize=oombytes,
-                                                          devvendor=report['devvendor'],
-                                                          devgen=report['devgen'],
-                                                          devchipset=report['devchipset'],
-                                                          description=report['devdescription'],
-                                                          drvver=report['driverversion'],
-                                                          drvdate=report['driverdate'],
-                                                          compositor=report['compositor'],
-                                                          reason=crashReason,
-                                                          infolink=infoLink,
-                                                          startupiconclass=startupStyle,
-                                                          stackline=stackHtml)
-    if appendAmp:
-      crashStatsHashQuery += '&'
-
-  sigHtml = Template(outerReportTemplate).substitute(# expandosig=('sig'+str(signatureIndex)),
-                                                     expandosig=stringToHtmlId(sig),
-                                                     os=sigRecord['opoerating_system'],
-                                                     fxver=sigRecord['firefoxVer'],
-                                                     osver=sigRecord['os_version'],
-                                                     arch=sigRecord['arch'],
-                                                     report=reportHtml)
-
-  crashStatsHashQuery = crashStatsHashQuery.rstrip('&')
-
-  searchIconClass = 'icon'
-  if hashTotal == 0:
-    crashStatsHashQuery = ''
-    searchIconClass = 'lticon'
-
-  # ann$expandosig - view signature meta parameter
-  annIconClass = 'lticon'
-  if sig in annDb:
-    arec = record = annDb[sig]
-    # record['annotations'] (list)
-    sigAnnotations = str()
-    # record['fixedby'] (list of tables, { 'version': 87, 'bug': 1234567 }
-    for fb in record['fixedby']:
-      sigAnnotations += Template(annotationReport).substitute(annotations=escape(fb['annotation']),
-                                                              fixedbybug=createBugLink(str(fb['bug'])),
-                                                              fixedbyversion=fb['version'])
-    for annotation in record['annotations']:
-      annotation = escape(annotation)
-      annotation = escapeBugLinks(annotation)
-      sigAnnotations += Template(annotationReport).substitute(annotations=annotation, fixedbybug='', fixedbyversion='')
-    annotationsHtml += Template(annotationTemplate).substitute(expandosig=('sig'+str(signatureIndex)),
-                                                               annreports=sigAnnotations)
-    annIconClass = 'icon'
-
-  sigMetaHtml += Template(outerSigMetaTemplate).substitute(rank=signatureIndex,
-                                                           percent=("%.00f%%" % percent),
-                                                           # expandosig=('sig'+str(signatureIndex)),
-                                                           expandosig=stringToHtmlId(sig),
-                                                           annexpandosig=('sig'+str(signatureIndex)),
-                                                           signature=(html.escape(sig)),
-                                                           oomicon=oomIcon,
-                                                           iconclass=searchIconClass,
-                                                           anniconclass=annIconClass,
-                                                           cslink=crashStatsHashQuery,
-                                                           cssearchlink=crashStatsQuery,
-                                                           clientcount=sigRecord['clientcount'],
-                                                           count=crashcount,
-                                                           reports=sigHtml)
-
-signatureHtml += Template(outerSigTemplate).substitute(channel=channel,
-                                                       version=fxVersion,
-                                                       process=processType,
-                                                       sigcount=sigCount,
-                                                       repcount=reportCount,
-                                                       signature=sigMetaHtml)
-
-# Add processed date to the footer
-dateTime = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
-resultFile.write(Template(mainPage).substitute(main=signatureHtml,
-                                               annotations=annotationsHtml,
-                                               processeddate=dateTime))
-resultFile.close()
-
-# Caching of reports
-cacheReports(reports)
+if __name__ == "__main__":
+  main()

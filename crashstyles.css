@@ -119,32 +119,114 @@ a:visited {
   white-space: nowrap;
 }
 
+/* signature meta data - os, version, arch listings */
 .signature-meta-left {
-  display: inline-block;
-  width: 400px;
-  border: solid 0px black;
+  float: left;
+  display: grid;
+  max-width: 50%;
+  border: 0px solid black;
   white-space: nowrap;
 }
 
 .signature-meta-right {
-  display: inline-block;
-  width:auto;
-  border: solid 0px black;
+  float: right;
+  display: inline;
+  max-width: 49%;
+  border: 0px solid black;
   white-space: nowrap;
 }
 
-.meta-title {
-  margin-left: 10px;
-  display: inline-block;
+.meta-title-os {
+  grid-row: 1;
+  grid-column: 1;
   border: 0px solid lightgrey;
   width: 150px;
 }
 
-.meta-data {
-  display: inline-block;
+.meta-title-fxver {
+  grid-row: 2;
+  grid-column: 1;
   border: 0px solid lightgrey;
-  margin:1px;
+  width: 150px;
+}
+
+.meta-title-ver {
+  grid-row: 3;
+  grid-column: 1;
+  border: 0px solid lightgrey;
+  width: 150px;
+}
+
+.meta-title-arch {
+  grid-row: 4;
+  grid-column: 1;
+  border: 0px solid lightgrey;
+  width: 150px;
+}
+
+/* signature meta data rows */
+
+.meta-data-os {
+  grid-row: 1;
+  grid-column: 2;
+  border: 0px solid lightgrey;
+  margin: 1px;
   width: auto;
+}
+
+.meta-data-fxver {
+  grid-row: 2;
+  grid-column: 2;
+  border: 0px solid lightgrey;
+  margin: 1px;
+  width: auto;
+}
+
+.meta-data-ver {
+  grid-row: 3;
+  grid-column: 2;
+  border: 0px solid lightgrey;
+  margin: 1px;
+  width: auto;
+}
+
+.meta-data-arch {
+  grid-row: 4;
+  grid-column: 2;
+  border: 0px solid lightgrey;
+  margin: 1px;
+  width: auto;
+}
+
+.sparkline-container {
+  margin: 2px;
+  border: 1px solid gray;
+  background-color: #fafafa;
+}
+
+.sparkline-value {
+  font-size: 9px;
+  margin: 1px;
+  width: auto;
+  border: solid 0px black;
+  white-space: nowrap;
+}
+
+.sparkline-svg {
+  margin: 0;
+  padding: 0;
+  border: solid 0px pink;
+  white-space: nowrap;
+}
+
+.report {
+  display: inline-block;
+  width: 100%;
+  font-size: 12px;
+  border-left: 1px solid gray;
+  border-right: 1px solid gray;
+  border-bottom: 1px solid gray;
+  background-color: #fafafa;
 }
 
 .report-header {
@@ -196,6 +278,11 @@ a:visited {
   overflow: hidden;
 }
 
+  .report-meta-data-meta > * {
+    margin-left: 2px;
+    margin-right: 2px;
+  }
+
 .report-meta-data-compositor {
   display: inline-block;
   border: 0px solid lightgrey;
@@ -217,15 +304,6 @@ a:visited {
   border: 0px solid lightgrey;
   text-overflow: ellipsis;
   overflow: hidden;
-}
-
-.report {
-  width: 100%;
-  font-size: 12px;
-  border-left: 1px solid gray;
-  border-right: 1px solid gray;
-  border-bottom: 1px solid gray;
-  background-color: #fafafa;
 }
 
 .stack {
@@ -321,6 +399,36 @@ a:visited {
   color: lightgray;
 }
 
+.grayicon {
+  color: #a2b0bb;
+}
+
 .noicon {
   visibility:hidden;
+}
+
+/* line with highlight area */
+.sparkline {
+  stroke: #3288ca;
+  fill: #c8def0;
+}
+
+/* change the spot color */
+.sparkline--spot {
+  stroke: #3288ca;
+  fill: #c8def0;
+}
+
+/* change the cursor color */
+.sparkline--cursor {
+  stroke: #3288ca;
+}
+
+/* style fill area and line colors using specific class name */
+.sparkline--fill {
+  fill: #c8def0;
+}
+
+.sparkline--line {
+  stroke: #3288ca;
 }

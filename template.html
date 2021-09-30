@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="fontawesome/css/fontawesome.css">
   <link rel="stylesheet" href="fontawesome/css/solid.css">
   <link rel="stylesheet" href="alertify/css/alertify.css">
+  <link rel="shortcut icon" href="./favicon.ico" type="image/x-icon">
   <style>
   </style>
   <script type="text/javascript" src="./alertify/alertify.js"></script>
@@ -93,10 +94,47 @@
   </script>
 
   <!-- start of crash template -->
+  <script type="module">
+    import { sparkline } from './sparkline.js';
+
+    function findClosest(target, tagName) {
+      if (target.tagName === tagName) {
+        return target;
+      }
+      while ((target = target.parentNode)) {
+        if (target.tagName === tagName) {
+          break;
+        }
+      }
+      return target;
+    }
+
+    var sloptions = {
+      onmousemove(event, datapoint) {
+        var svg = findClosest(event.target, "svg");
+        // note the double dollar signs below are escapes for python's template substitution.
+        //var date = (new Date(datapoint.date)).toUTCString().replace(/^.*?, (.*?) \d{2}:\d{2}:\d{2}.*?$$/, "$$1");
+        var date = (new Date(datapoint.date)).toDateString();
+
+        var valueElement = svg.previousElementSibling;
+        //valueElement.hidden = false;
+        valueElement.textContent = '' + datapoint.value.toFixed(0) + ' - ' + date;
+      },
+
+      onmouseout() {
+        var svg = findClosest(event.target, "svg");
+        var valueElement = svg.previousElementSibling;
+        //valueElement.hidden = true;
+      }
+    };
+    ////// sparkline data
+    $sparkline
+    ////// sparkline data
+  </script>
+
   <div id="mainlist">
     <div class="header">
       <div class="header-elements">Channel - $channel</div>
-      <div class="header-elements">Version - $version</div>
       <div class="header-elements">Process - $process</div>
       <div class="header-elements">($sigcount signatures, $repcount crashes)</div>
     </div>
@@ -121,6 +159,7 @@
       <div class="hdr-percent">$percent</div>
       <div class="hdr-signature"><a href='#a$expandosig'>$signature</a></div>
       <div class="hdr-rightpanel">
+        <div class="hdr-search"><span title="Fission Signature" class="$fissionicon fas fa-atom oomiconclass"></span></div>
         <div class="hdr-search"><span title="OOM Signature" class="$oomicon fas fa-battery-quarter oomiconclass"></span></div>
         <div class="hdr-search"><span title="View signature annotations" onclick="return displayAnnotations(event, 'ann$annexpandosig');" class="$anniconclass fas fa-list copyicon"></span></div>
         <div class="hdr-search"><span title="Copy signature to clipboard" onclick="copyText('$signature')" class="icon fas fa-copy copyicon"></span></div>
@@ -133,13 +172,24 @@
     <!-- start of signature meta template -->
     <div style="display:none;" id="$expandosig">
       <div class="signature-meta" onclick="expandElement(event.target, '$expandosig');">
+
         <div class="signature-meta-left">
-          <div class="meta-title">Operating System</div><div class="meta-data">$os</div><br />
-          <div class="meta-title">Firefox Version</div><div class="meta-data">$fxver</div><br />
-          <div class="meta-title">Version</div><div class="meta-data">$osver</div><br />
-          <div class="meta-title">Arch</div><div class="meta-data">$arch</div><br />
+          <!-- grid -->
+          <div class="meta-title-os">Operating System</div>
+          <div class="meta-title-fxver">Firefox Version</div>
+          <div class="meta-title-ver">Version</div>
+          <div class="meta-title-arch">Arch</div>
+          <div class="meta-data-os">$os</div>
+          <div class="meta-data-fxver">$fxver</div>
+          <div class="meta-data-ver">$osver</div>
+          <div class="meta-data-arch">$arch</div>
         </div>
         <div class="signature-meta-right">
+          <div class="sparkline-container">
+            <!-- sparkline graph, sibling relationship here is important -->
+            <div class="sparkline-value">&nbsp;</div>
+            <svg class="svg-$expandosig sparkline-svg" width="500" height="53" stroke-width="1"></svg>
+          </div>
         </div>
       </div>
       <div class="report">
@@ -203,6 +253,6 @@
     <!-- end of annotation report template -->
   </div>
   <!-- end of annotation template -->
-  <div class="processeddate">$processeddate</div>
+  <div class="processeddate">$processeddate</div>Source code for this dashboard is <a href="https://github.com/jmathies/util-process-top-crashes">available on Github</a>.
 </body>
 </html>
