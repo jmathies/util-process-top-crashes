@@ -21,6 +21,7 @@ import pprint
 #
 # examples:
 # python annotate.py -s "draw_quad_spans<T>" -a "filed Bug 1712938"
+# python annotate.py -s "mozilla::VideoFrameSurfaceVAAPI::ReleaseVAAPIData" -f 1752282 -v 98
 
 pp = pprint.PrettyPrinter(indent=2)
 

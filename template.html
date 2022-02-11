@@ -159,7 +159,9 @@
       <div class="hdr-percent">$percent</div>
       <div class="hdr-signature"><a href='#a$expandosig'>$signature</a></div>
       <div class="hdr-rightpanel">
-        <div class="hdr-search"><span title="Fission Signature" class="$fissionicon fas fa-atom oomiconclass"></span></div>
+        <div class="hdr-search"><span title="New Signature" class="$newicon fas fa-bell oomiconclass"></span></div>
+        <div class="hdr-search"><span title="Lockdown Signature" class="$lockicon fas fa-lock oomiconclass"></span></div>
+        <!-- <div class="hdr-search"><span title="Fission Signature" class="$fissionicon fas fa-atom oomiconclass"></span></div>-->
         <div class="hdr-search"><span title="OOM Signature" class="$oomicon fas fa-battery-quarter oomiconclass"></span></div>
         <div class="hdr-search"><span title="View signature annotations" onclick="return displayAnnotations(event, 'ann$annexpandosig');" class="$anniconclass fas fa-list copyicon"></span></div>
         <div class="hdr-search"><span title="Copy signature to clipboard" onclick="copyText('$signature')" class="icon fas fa-copy copyicon"></span></div>
@@ -174,11 +176,12 @@
       <div class="signature-meta" onclick="expandElement(event.target, '$expandosig');">
 
         <div class="signature-meta-left">
-          <!-- grid -->
+          <!-- grid left -->
           <div class="meta-title-os">Operating System</div>
           <div class="meta-title-fxver">Firefox Version</div>
           <div class="meta-title-ver">Version</div>
           <div class="meta-title-arch">Arch</div>
+          <!-- grid right -->
           <div class="meta-data-os">$os</div>
           <div class="meta-data-fxver">$fxver</div>
           <div class="meta-data-ver">$osver</div>

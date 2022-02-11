@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, date
 
 # python -m pip install SomePackage
 # python.exe -m pip install --upgrade SomePackage
-
+# python.exe -m pip install --upgrade fx_crash_sig
 import fx_crash_sig
 from fx_crash_sig.crash_processor import CrashProcessor
 
@@ -37,6 +37,7 @@ from fx_crash_sig.crash_processor import CrashProcessor
 # -u (url)      : redash rest endpoint url
 # -k (str)      : redash user api key
 # -q (query id) : redash api query id
+# -c (value)    : redash cache value in minutes (0 is the default)
 # -n (name)     : local json cache filename to use (excluding extension)
 # -d (name)     : local html output filename to use (excluding extension)
 # -c (count)    : number of reports to process, overrides the default
@@ -46,18 +47,29 @@ from fx_crash_sig.crash_processor import CrashProcessor
 # python crashes.py -n nightly -d nightly -u https://sql.telemetry.mozilla.org -k (userapikey) -q 79354 -p process_type=gpu -p version=89 -p channel=nightly
 
 ## TODO
-## linux distro information someplace
-## fission reporting? at least report it via an indicator.
-## filter graphing and the list based on clicks on the header data (version, os, arch)
-## popup panel layout (Fixed By and Notes) is confusing, and wide when it doesn't need to be.
+## report struct doesn't break summary information down properly - 
+    #{'675f52d5502e6cd51eda7dac81f7656f': {'arch': ['x86-64'],
+    #                                      'clientcount': 3,
+    #                                      'firefoxver': ['99.0a1'],
+    #                                      'operatingsystem': ['Linux'],
+    #                                      'osversion': ['5.16.8', '5.16.4'],
+    #                                      'reportList': [{'arch': 'x86-64',
+## convert string sorts to int sorts for version numbers
+## annotation signature keywords
+## pull os and other meta info from stats instead of reports
+## copy stack feature
 ## improve signature header information layout, particular fx version numbers. We can easily expand this down and host info similar to crash stats summary pages.
+## add copy stack feature in the template
+## click handler should ignore clicks if there's selection in the page
+## filter graphing and the list based on clicks on the header data (version, os, arch)
+## removing old signatures should be delayed a bit to prevent removing valid signaures that don't have hit during version changes.
+## popup panel layout (Fixed By and Notes) is confusing, and wide when it doesn't need to be.
 ## Remove reliance on version numbers? Need to get signature headers hooked up, and choose the latest releases for main reports
 ## build id (nightly / beta)
+## linux distro information someplace
 ## clean up the startup crash icons
 ## better annotations support
 ## add dates to annotations
-## add copy stack feature in the template
-## click handler should ignore clicks if there's selection in the page
 ## signature search?
 
 # python crashes.py -n beta -d beta -u https://sql.telemetry.mozilla.org -k nc2gV50AtsZHUpfmPwtR0F9ysiD8SateThgXUEba -q 79354 -p process_type=gpu -p version=90 -p channel=beta -s "draw_quad_spans<T>"
@@ -73,7 +85,7 @@ MaxStackDepth = 50
 # Maximum number of raw crashes to process. This matches
 # the limit value of re:dash queries. Reduce for testing
 # purposes.
-CrashProcessMax = 5000
+CrashProcessMax = 7500
 # Signature list length of the resulting top crashes report
 MostCommonLength = 50
 # When generating a report, signatures with crash counts
@@ -85,6 +97,8 @@ ReportLowerClientLimit = 2 # filter out single client crashes
 # Maximum number of crash reports to include for each signature
 # in the final report. Limits the size of the resulting html.
 MaxReportCount = 100
+# Default redash max_age value in minutes
+MaxAge = 43200
 # Set to True to target a local json file for testing
 LoadLocally = False
 LocalJsonFile = "GPU_Raw_Crash_Data_2021_03_19.json"
@@ -182,11 +196,19 @@ def poll_job(s, redash_url, job):
 # Redash queries
 ###########################################################
 
-def getRedashQueryResult(redash_url, query_id, api_key, params):
+def getRedashQueryResult(redash_url, query_id, api_key, cacheValue, params):
   s = requests.Session()
   s.headers.update({'Authorization': 'Key {}'.format(api_key)})
 
-  payload = dict(max_age=86400, parameters=params)
+  # max_age is a redash value that controls cached results. If there is a cached query result
+  # newer than this time (in seconds) it will be returned instead of a fresh query.
+  # 86400 = 24 hours, 43200 = 12 hours, 0 = refresh query 
+  #
+  # Note sometimes the redash caching feature gets 'stuck' on an old cache. Side effect is
+  # that all reports will eventually be older than 7 days and as such will be filtered out
+  # by this script's age checks in processRedashDataset. Crash lists will shrink to zero
+  # as a result.
+  payload = dict(max_age=cacheValue, parameters=params)
 
   url = "%s/api/queries/%s/results" % (redash_url, query_id)
   response = s.post(url, data=json.dumps(payload))
@@ -396,14 +418,17 @@ def getDatasetStats(reports):
     reportCount += len(reports[hash]['reportList'])
   return sigCount, reportCount
 
-def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, parameters):
-  print("processing %d reports" % CrashProcessMax)
-
+def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, cacheValue, parameters):
   props = list()
   reports = dict()
 
-  totalCrashesProcessed = 0
-
+  totals = {
+    'processed': 0,
+    'skippedBadSig': 0,
+    'alreadyProcessed': 0,
+    'outdated': 0
+  }
+  
   # load up our database of processed crash ids
   # returns an empty dict() if no data is loaded.
   reports, stats = loadReports(dbFilename)
@@ -413,16 +438,17 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, parameters):
       dataset = json.load(f)
   else:
     with Spinner("loading from redash..."):
-      dataset = getRedashQueryResult(jsonUrl, queryId, userKey, parameters)
-    print()
-    print("done.")
+      dataset = getRedashQueryResult(jsonUrl, queryId, userKey, cacheValue, parameters)
+    print("   done.")
 
   crashesToProcess = len(dataset["query_result"]["data"]["rows"])
   if  crashesToProcess > CrashProcessMax:
     crashesToProcess = CrashProcessMax
 
+  print('%04d total reports loaded.' % crashesToProcess)
+
   for recrow in dataset["query_result"]["data"]["rows"]:
-    if totalCrashesProcessed == CrashProcessMax:
+    if totals['processed'] >= CrashProcessMax:
       break
 
     # pull some redash props out of the recrow. You can add these
@@ -458,12 +484,18 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, parameters):
     startupCrash = int(recrow['startup_crash'])
     fissionEnabled = int(recrow['fission_enabled'])
 
+    lockdownVal = int(recrow['lockdown_enabled'])
+    lockdownEnabled = False
+    if lockdownVal == 1:
+      lockdownEnabled = True
+
     if crashReason != None:
       crashReason = crashReason.strip('\n')
 
     # Ignore crashes older than 7 days
     if not checkCrashAge(crashDate):
-      totalCrashesProcessed += 1
+      totals['processed'] += 1
+      totals['outdated'] += 1
       continue
 
     # check if the crash id is processed, if so continue
@@ -477,12 +509,13 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, parameters):
           # if you add a new value to the sql queries, you can update
           # the local json cache we have in memory here. Saves having
           # to delete the file and symbolicate everything again.
-          report['fission'] = fissionEnabled
+          #report['fission'] = fissionEnabled
+          report['lockdown'] = lockdownEnabled
           break
 
     if found:
-      totalCrashesProcessed += 1
-      progress(totalCrashesProcessed, crashesToProcess)
+      totals['processed'] += 1
+      progress(totals['processed'], crashesToProcess)
       continue
   
     # symbolicate and return payload result
@@ -490,7 +523,8 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, parameters):
     signature = generateSignature(payload)
 
     if skipProcessSignature(signature):
-      totalCrashesProcessed += 1
+      totals['processed'] += 1
+      totals['skippedBadSig'] += 1
       continue
 
     # pull stack information for the crashing thread
@@ -558,6 +592,7 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, parameters):
       'crashreason':        crashReason,
       'startup':            startupCrash,
       'fission':            fissionEnabled,
+      'lockdown':           lockdownEnabled,
       # Duplicated but useful if we decide to change the hashing algo
       # and need to reprocess reports.
       'operatingsystem':    operatingSystem,
@@ -598,13 +633,17 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, parameters):
         stats[hash]['crashdata'][crashDate][operatingSystem][operatingSystemVer][arch][firefoxVer]['clientcount'] += 1
         stats[hash]['crashdata'][crashDate]['clientids'].append(clientId)
 
-    totalCrashesProcessed += 1
+    totals['processed'] += 1
 
-    progress(totalCrashesProcessed, crashesToProcess)
+    progress(totals['processed'], crashesToProcess)
 
   print('\n')
-  if totalCrashesProcessed == 0:
-    print('No reports processed.')
+  print('%04d - reports processed' % totals['processed'])
+  print('%04d - cached results' % totals['alreadyProcessed'])
+  print('%04d - reports skipped, bad signature' % totals['skippedBadSig'])
+  print('%04d - reports skipped, out dated' % totals['outdated'])
+
+  if totals['processed'] == 0:
     exit()
 
   # Post processing steps
@@ -629,7 +668,7 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, parameters):
         clientCounts[hash].append(clientId)
     reports[hash]['clientcount'] = len(clientCounts[hash])
 
-  return reports, stats, totalCrashesProcessed
+  return reports, stats, totals['processed']
 
 def checkCrashAge(dateStr):
   try:
@@ -709,6 +748,16 @@ def isFissionRelated(reports):
     except:
       pass
   return isFission
+
+def isLockdownRelated(reports):
+  isLockdown = True
+  for report in reports:
+    try:
+      if report['lockdown'] == 0:
+        isLockdown = False
+    except:
+      pass
+  return isLockdown
 
 def generateTopReportsList(reports):
   # For certain types of reasons like RustMozCrash, organize
@@ -967,6 +1016,156 @@ def getItemizedHeaderList(theList):
     result += s + ', '
   return result.strip(' ,')
 
+# currently not in use
+def versionListIsExclusiveTo(version, vList):
+  # 92.0b6
+  # 92.0.1
+  # 92.0
+  # 94.0a1
+  found = False
+  for v in vList:
+    majorVersionNumber = v.split('.')[0]
+    if version == majorVersionNumber:
+      found = True
+
+  for v in vList:
+    majorVersionNumber = v.split('.')[0]
+    if version != majorVersionNumber:
+      found = False
+  return found
+
+def getMetaDataFromStats(stats):
+  signature = stats['signature']
+  crashData = stats['crashdata']
+  windowsVersions = []
+  linuxVersions = []
+  macVersions = []
+  for dateStr in crashData:
+    # test_list = list(set(test_list))
+
+    # 'Windows', 'Linux', 'Mac'
+    winVer = list(set(list(crashData[dateStr]['Windows'])))
+    macVer = list(set(list(crashData[dateStr]['Mac'])))
+    linVer = list(set(list(crashData[dateStr]['Linux'])))
+
+    # os versions list
+    windowsVersions = list(set(winVer))
+    macVersions = list(set(macVer))
+    linuxVersions = list(set(linVer))
+
+    # x86, x86-64
+    for osver in winVer:
+      winFxVers = list(set(list(crashData[dateStr]['Windows'][osver]['x86-64'])))
+      macFxVers = list(set(list(crashData[dateStr]['Mac'][osver]['x86-64'])))
+      linFxVers = list(set(list(crashData[dateStr]['Linux'][osver]['x86-64'])))
+
+# not in use
+def findkeys(node, kv):
+    if isinstance(node, list):
+        for i in node:
+            for x in findkeys(i, kv):
+               yield x
+    elif isinstance(node, dict):
+        if kv in node:
+            yield node[kv]
+        for j in node.values():
+            for x in findkeys(j, kv):
+                yield x
+
+def getFxVersionsFromStatsRec(record):
+  #pp.pprint(record)
+  #"Windows": {
+  #  "10.0": {
+  #    "x86-64": {
+  #      "97.0a1": {
+  #        "clientcount": 4,
+  #        "crashcount": 4
+  #      }
+  #    }
+  #  }
+  #}
+  result = list()
+  for date in record.values():
+    for opsys in date.values():
+      if (isinstance(opsys, dict)):
+        for osver in opsys.values():
+          for arch in osver.values():
+            for ver in arch.keys():
+              if ver not in result:
+                result.append(ver)
+  result.sort()
+  return result
+
+def getSimpVerList(verList):
+  result = list()
+  for ver in verList:
+    simp = ver.split('.', 1)[0]
+    if simp not in result:
+      result.append(simp)
+  return result
+
+def testIfNewCrash(record, version):
+  verList = getFxVersionsFromStatsRec(record)
+  # versionListIsExclusiveTo?
+  simpList = getSimpVerList(verList)
+  if version in simpList and len(simpList) == 1:
+    return True
+  return False
+
+def prettyBetaVersions(verList):
+  verList.sort()
+  betaDict = dict()
+
+  for s in verList:
+    mver = s.split('.')[0]
+    if mver not in betaDict.keys():
+      betaDict[mver] = list()
+
+    try:
+      bver = s.split('b',1)[1]
+    except:
+      bver = 'rc' # RC's '94.0'
+
+    betaDict[mver].append(bver)
+
+  result = ''
+  for ver in betaDict.keys():
+    betaDict[ver].sort()
+    result += ver + ' ['
+    for beta in betaDict[ver]:
+      result += beta + ','
+    result = result.strip(',')
+    result += '] '
+  return result
+
+
+def getPrettyFirefoxVersionList(verList, channel):
+  # ['91.0a1', '92.0a1', '93.0a1', '94.0a1', '95.0a1', '96.0a1', '97.0a1', '98.0a1', '99.0a1']
+  # ['97.0b1', '97.0b2', '97.0b3', '97.0b4', '97.0b5', '97.0b6', '98.0b1', '98.0b2'] - beta lists can be long!
+  # ['94.0.1', '94.0.2', '95.0', '95.0.1', '95.0.2', '96.0', '96.0.1', '96.0.2', '96.0.3', '97.0']
+  result = ''
+  if channel == 'nightly':
+    verList.sort()
+    for s in verList:
+      result += s.split('.')[0] + ', '
+  elif channel == 'beta':
+    result = prettyBetaVersions(verList)
+  else:
+    verList.sort()
+    for s in verList:
+      result += s + ', '
+
+  return result.strip(' ,')
+
+def getOSVersionList(theList):
+  print(theList)
+  result = ''
+  sl = theList.sort()
+  for s in theList:
+    result += s + ', '
+  return result.strip(' ,')
+
+
 def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
                            channel, queryFxVersion, outputFilename, annoFilename):
 
@@ -1038,8 +1237,8 @@ def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
     signature = sigRecord['signature']
 
     prettyOperatingSystems = getItemizedHeaderList(sigRecord['operatingsystem'])
-    prettyOperatingSystemVers = getItemizedHeaderList(sigRecord['osversion'])
-    prettyFirefoxVers = getItemizedHeaderList(sigRecord['firefoxver'])
+    prettyOperatingSystemVers = getOSVersionList(sigRecord['osversion'])
+    prettyFirefoxVers = getPrettyFirefoxVersionList(sigRecord['firefoxver'], channel)
     prettyArchs = getItemizedHeaderList(sigRecord['arch'])
 
     operatingSystemsList = sigRecord['operatingsystem']
@@ -1048,10 +1247,16 @@ def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
     archsList = sigRecord['arch']
 
     crashcount = len(sigRecord['reportList'])
-    percent = (crashcount / totalCrashesProcessed)*100.0
+    percent = (crashcount / reportCount)*100.0
 
     if crashcount < MinCrashCount: # Skip small crash count reports
       continue
+
+    isNewCrash = False
+    newIcon = 'noicon'
+    if testIfNewCrash(stats[hash]['crashdata'], queryFxVersion):
+      isNewCrash = True
+      newIcon = 'icon'
 
     signatureIndex += 1
 
@@ -1062,11 +1267,15 @@ def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
     # is at the top of the list.
     reportsToReport = generateTopReportsList(reports[hash]['reportList'])
 
-    fissionIcon = 'noicon'
-    if isFissionRelated(reports[hash]['reportList']):
-      fissionIcon = 'icon'
-    if crashcount < 10 and fissionIcon == 'icon':
-      fissionIcon = 'grayicon'
+    #fissionIcon = 'noicon'
+    #if isFissionRelated(reports[hash]['reportList']):
+    #  fissionIcon = 'icon'
+    #if crashcount < 10 and fissionIcon == 'icon':
+    #  fissionIcon = 'grayicon'
+
+    lockdownIcon = 'noicon'
+    if isLockdownRelated(reports[hash]['reportList']):
+      lockdownIcon = 'icon'
 
     reportHtml = str()
     idx = 0
@@ -1086,7 +1295,7 @@ def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
         crashReason = ''
 
       crashType = report['type']
-      crashType = crashType.lstrip('EXCEPTION_')
+      crashType = crashType.replace('EXCEPTION_', '')
 
       appendAmp = False
       if hashTotal < 30: # This is all crash stats can hande (414 Request-URI Too Large)
@@ -1185,7 +1394,9 @@ def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
                                                              expandosig=stringToHtmlId(hash),
                                                              annexpandosig=('sig'+str(signatureIndex)),
                                                              signature=(html.escape(signature)),
-                                                             fissionicon=fissionIcon,
+                                                             newicon=newIcon,
+                                                             fissionicon='noicon',
+                                                             lockicon=lockdownIcon,
                                                              oomicon=oomIcon,
                                                              iconclass=searchIconClass,
                                                              anniconclass=annIconClass,
@@ -1223,10 +1434,10 @@ def main():
 
   dbFilename = "crashreports" #.json
   annoFilename = "annotations"
-
+  cacheValue = MaxAge
   parameters = dict()
 
-  options, remainder = getopt.getopt(sys.argv[1:], 'u:n:d:c:k:q:p:s:zm')
+  options, remainder = getopt.getopt(sys.argv[1:], 'c:u:n:d:c:k:q:p:s:zm')
   for o, a in options:
     if o == '-u':
       jsonUrl = a
@@ -1234,6 +1445,8 @@ def main():
     elif o == '-n':
       outputFilename = a
       print("output filename: %s.html" %  outputFilename)
+    elif o == '-c':
+      cacheValue = int(a)
     elif o == '-d':
       dbFilename = a
       print("local cache file: %s.json" %  dbFilename)
@@ -1267,6 +1480,8 @@ def main():
     print("missing query id.")
     exit()
 
+  print("redash cache time: %d" %  cacheValue)
+
   parameters['crashcount'] = str(CrashProcessMax)
 
   if len(targetSignature) > 0:
@@ -1275,7 +1490,7 @@ def main():
     exit()
 
   # Pull fresh data from redash and process it
-  reports, stats, totalCrashesProcessed = processRedashDataset(dbFilename, jsonUrl, queryId, userKey, parameters)
+  reports, stats, totalCrashesProcessed = processRedashDataset(dbFilename, jsonUrl, queryId, userKey, cacheValue, parameters)
 
   # Caching of reports
   cacheReports(reports, stats, dbFilename)

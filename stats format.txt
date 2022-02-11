@@ -1,0 +1,20 @@
+
+  "26c490baeb7b0b87823e04a98c425d38": {
+    "signature": "nsWidgetWindowsModuleCtor",
+    "crashdata": {
+      "2021-10-09": {
+        "crashids": [ "05aa6cbb-6ca5-4aed-948c-925894fc63d6", "6ef4f19c-722c-4e8e-90cc-dac6f64d89ba", "b92974ac-3cda-4bdf-8a66-f229f9d9f348" ],
+        "clientids": [ "48ce45ec-5ca2-43b1-8565-e3f90b98024e" ],
+        "Windows": { Linux Mac
+          "10.0": {
+            "x86-64": { also 'x86'
+              "95.0a1": {
+                "clientcount": 1,
+                "crashcount": 3
+              }
+            }
+          }
+        }
+      }
+    }
+  },
