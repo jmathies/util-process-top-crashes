@@ -47,22 +47,13 @@ from fx_crash_sig.crash_processor import CrashProcessor
 # python crashes.py -n nightly -d nightly -u https://sql.telemetry.mozilla.org -k (userapikey) -q 79354 -p process_type=gpu -p version=89 -p channel=nightly
 
 ## TODO
-## report struct doesn't break summary information down properly - 
-    #{'675f52d5502e6cd51eda7dac81f7656f': {'arch': ['x86-64'],
-    #                                      'clientcount': 3,
-    #                                      'firefoxver': ['99.0a1'],
-    #                                      'operatingsystem': ['Linux'],
-    #                                      'osversion': ['5.16.8', '5.16.4'],
-    #                                      'reportList': [{'arch': 'x86-64',
+## report struct may not need to os, osver, and arch info anymore since we added stats
+## speed up crash id searching
+## signatures that went away feature
 ## convert string sorts to int sorts for version numbers
 ## annotation signature keywords
-## pull os and other meta info from stats instead of reports
 ## copy stack feature
-## improve signature header information layout, particular fx version numbers. We can easily expand this down and host info similar to crash stats summary pages.
-## add copy stack feature in the template
 ## click handler should ignore clicks if there's selection in the page
-## filter graphing and the list based on clicks on the header data (version, os, arch)
-## removing old signatures should be delayed a bit to prevent removing valid signaures that don't have hit during version changes.
 ## popup panel layout (Fixed By and Notes) is confusing, and wide when it doesn't need to be.
 ## Remove reliance on version numbers? Need to get signature headers hooked up, and choose the latest releases for main reports
 ## build id (nightly / beta)
@@ -70,7 +61,9 @@ from fx_crash_sig.crash_processor import CrashProcessor
 ## clean up the startup crash icons
 ## better annotations support
 ## add dates to annotations
-## signature search?
+
+## improve signature header information layout, particular fx version numbers. We can easily expand this down and host info similar to crash stats summary pages.
+##  - filter graphing and the list based on clicks on the header data (version, os, arch)
 
 # python crashes.py -n beta -d beta -u https://sql.telemetry.mozilla.org -k nc2gV50AtsZHUpfmPwtR0F9ysiD8SateThgXUEba -q 79354 -p process_type=gpu -p version=90 -p channel=beta -s "draw_quad_spans<T>"
 
@@ -499,6 +492,7 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, cacheValue, para
       continue
 
     # check if the crash id is processed, if so continue
+    ## note, this search has become quite slow. optimize me.
     found = False
     signature = ""
     for sig in reports:
@@ -510,7 +504,7 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, cacheValue, para
           # the local json cache we have in memory here. Saves having
           # to delete the file and symbolicate everything again.
           #report['fission'] = fissionEnabled
-          report['lockdown'] = lockdownEnabled
+          #report['lockdown'] = lockdownEnabled
           break
 
     if found:
@@ -1034,58 +1028,9 @@ def versionListIsExclusiveTo(version, vList):
       found = False
   return found
 
-def getMetaDataFromStats(stats):
-  signature = stats['signature']
-  crashData = stats['crashdata']
-  windowsVersions = []
-  linuxVersions = []
-  macVersions = []
-  for dateStr in crashData:
-    # test_list = list(set(test_list))
-
-    # 'Windows', 'Linux', 'Mac'
-    winVer = list(set(list(crashData[dateStr]['Windows'])))
-    macVer = list(set(list(crashData[dateStr]['Mac'])))
-    linVer = list(set(list(crashData[dateStr]['Linux'])))
-
-    # os versions list
-    windowsVersions = list(set(winVer))
-    macVersions = list(set(macVer))
-    linuxVersions = list(set(linVer))
-
-    # x86, x86-64
-    for osver in winVer:
-      winFxVers = list(set(list(crashData[dateStr]['Windows'][osver]['x86-64'])))
-      macFxVers = list(set(list(crashData[dateStr]['Mac'][osver]['x86-64'])))
-      linFxVers = list(set(list(crashData[dateStr]['Linux'][osver]['x86-64'])))
-
-# not in use
-def findkeys(node, kv):
-    if isinstance(node, list):
-        for i in node:
-            for x in findkeys(i, kv):
-               yield x
-    elif isinstance(node, dict):
-        if kv in node:
-            yield node[kv]
-        for j in node.values():
-            for x in findkeys(j, kv):
-                yield x
-
-def getFxVersionsFromStatsRec(record):
-  #pp.pprint(record)
-  #"Windows": {
-  #  "10.0": {
-  #    "x86-64": {
-  #      "97.0a1": {
-  #        "clientcount": 4,
-  #        "crashcount": 4
-  #      }
-  #    }
-  #  }
-  #}
+def getFxVersionsFromStatsRec(statsCrashData):
   result = list()
-  for date in record.values():
+  for date in statsCrashData.values():
     for opsys in date.values():
       if (isinstance(opsys, dict)):
         for osver in opsys.values():
@@ -1096,6 +1041,32 @@ def getFxVersionsFromStatsRec(record):
   result.sort()
   return result
 
+def getPlatformDataFromStatsRec(statsCrashData):
+  osresult = list()
+  verresult = list()
+  archresult = list()
+  for date in statsCrashData.values():
+    # accumulate operating system type
+    for opsys in date.keys():
+      if opsys in ['Windows', 'Linux', 'Mac']: # filter out lists clientids and crashids
+        if opsys not in osresult:
+          osresult.append(opsys)
+        osdict = date[opsys]
+        # accumulate os version values
+        for osver in osdict.keys():
+          if osver not in verresult:
+            verresult.append(osver)
+          # accumulate arch values
+          osverdict = osdict[osver]
+          for arch in osverdict.keys():
+            if arch not in archresult:
+              archresult.append(arch)
+
+  osresult.sort()
+  verresult.sort()
+  archresult.sort()
+  return osresult, verresult, archresult
+
 def getSimpVerList(verList):
   result = list()
   for ver in verList:
@@ -1104,9 +1075,8 @@ def getSimpVerList(verList):
       result.append(simp)
   return result
 
-def testIfNewCrash(record, version):
-  verList = getFxVersionsFromStatsRec(record)
-  # versionListIsExclusiveTo?
+def testIfNewCrash(statsCrashData, version):
+  verList = getFxVersionsFromStatsRec(statsCrashData)
   simpList = getSimpVerList(verList)
   if version in simpList and len(simpList) == 1:
     return True
@@ -1138,11 +1108,19 @@ def prettyBetaVersions(verList):
     result += '] '
   return result
 
+def getCommaDelimitedList(theList):
+  result = ''
+  theList.sort()
+  for s in theList:
+    result += s + ', '
+  return result.strip(' ,')
 
-def getPrettyFirefoxVersionList(verList, channel):
-  # ['91.0a1', '92.0a1', '93.0a1', '94.0a1', '95.0a1', '96.0a1', '97.0a1', '98.0a1', '99.0a1']
-  # ['97.0b1', '97.0b2', '97.0b3', '97.0b4', '97.0b5', '97.0b6', '98.0b1', '98.0b2'] - beta lists can be long!
-  # ['94.0.1', '94.0.2', '95.0', '95.0.1', '95.0.2', '96.0', '96.0.1', '96.0.2', '96.0.3', '97.0']
+def getPrettyPlatformLists(statsCrashData):
+  opsys, ver, arch = getPlatformDataFromStatsRec(statsCrashData)
+  return getCommaDelimitedList(opsys), getCommaDelimitedList(ver), getCommaDelimitedList(arch)
+
+def getPrettyFirefoxVersionList(statsCrashData, channel):
+  verList = getFxVersionsFromStatsRec(statsCrashData)
   result = ''
   if channel == 'nightly':
     verList.sort()
@@ -1156,15 +1134,6 @@ def getPrettyFirefoxVersionList(verList, channel):
       result += s + ', '
 
   return result.strip(' ,')
-
-def getOSVersionList(theList):
-  print(theList)
-  result = ''
-  sl = theList.sort()
-  for s in theList:
-    result += s + ', '
-  return result.strip(' ,')
-
 
 def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
                            channel, queryFxVersion, outputFilename, annoFilename):
@@ -1230,21 +1199,18 @@ def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
 
   for hash, crashcount in collection:
     try:
-      sigRecord = reports[hash]
+      sigRecord = reports[hash] # reports data vs. stats
     except KeyError:
       continue
 
     signature = sigRecord['signature']
+    statsCrashData = stats[hash]['crashdata']
 
-    prettyOperatingSystems = getItemizedHeaderList(sigRecord['operatingsystem'])
-    prettyOperatingSystemVers = getOSVersionList(sigRecord['osversion'])
-    prettyFirefoxVers = getPrettyFirefoxVersionList(sigRecord['firefoxver'], channel)
-    prettyArchs = getItemizedHeaderList(sigRecord['arch'])
+    prettyOperatingSystems, prettyOperatingSystemVers, prettyArchs = getPrettyPlatformLists(statsCrashData)
+    prettyFirefoxVers = getPrettyFirefoxVersionList(statsCrashData, channel)
 
-    operatingSystemsList = sigRecord['operatingsystem']
-    operatingSystemVersList = sigRecord['osversion']
-    firefoxVersList = sigRecord['firefoxver']
-    archsList = sigRecord['arch']
+    operatingSystemsList, operatingSystemVersList, archsList = getPlatformDataFromStatsRec(statsCrashData)
+    firefoxVersList = getFxVersionsFromStatsRec(statsCrashData)
 
     crashcount = len(sigRecord['reportList'])
     percent = (crashcount / reportCount)*100.0
@@ -1254,7 +1220,7 @@ def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
 
     isNewCrash = False
     newIcon = 'noicon'
-    if testIfNewCrash(stats[hash]['crashdata'], queryFxVersion):
+    if testIfNewCrash(statsCrashData, queryFxVersion):
       isNewCrash = True
       newIcon = 'icon'
 
