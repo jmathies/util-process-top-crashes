@@ -53,6 +53,7 @@ a:visited {
   background-color: #e8ebef;
   margin-top: 7px;
   white-space: nowrap;
+  overflow: hidden;
 }
 
 .hdr-rank {
@@ -117,6 +118,7 @@ a:visited {
   display: inline-block;
   margin-bottom: 0px;
   white-space: nowrap;
+  overflow: hidden;
 }
 
 /* signature meta data - os, version, arch listings */
@@ -235,6 +237,8 @@ a:visited {
   padding-top: 5px;
   padding-bottom: 5px;
   padding-left: 5px;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .report-meta {
@@ -243,14 +247,13 @@ a:visited {
   padding-bottom: 5px;
   padding-left: 5px;
   white-space: nowrap;
-  text-overflow: ellipsis;
   overflow: hidden;
 }
 
 .report-meta-data-index {
   display: inline-block;
   border: 0px solid lightgrey;
-  width: 75px;
+  width: 25px;
   overflow: hidden;
 }
 
@@ -273,20 +276,28 @@ a:visited {
 .report-meta-data-meta {
   display: inline-block;
   border: 0px solid lightgrey;
-  width: 50px;
+  width: 25px;
   text-overflow: ellipsis;
   overflow: hidden;
 }
 
-  .report-meta-data-meta > * {
-    margin-left: 2px;
-    margin-right: 2px;
-  }
+.report-meta-data-meta > * {
+  margin-left: 2px;
+  margin-right: 2px;
+}
 
 .report-meta-data-compositor {
   display: inline-block;
   border: 0px solid lightgrey;
-  width: 150px;
+  width: 75px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.report-meta-data-oom {
+  display: inline-block;
+  border: 0px solid lightgrey;
+  width: 75px;
   text-overflow: ellipsis;
   overflow: hidden;
 }
@@ -302,8 +313,9 @@ a:visited {
 .report-meta-data-reason {
   display: inline-block;
   border: 0px solid lightgrey;
-  text-overflow: ellipsis;
   overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100px;
 }
 
 .stack {
@@ -432,3 +444,10 @@ a:visited {
 .sparkline--line {
   stroke: #3288ca;
 }
+
+.clickdiv {
+  cursor: pointer;
+  font-weight: bold;
+  color: #116594;
+}
+

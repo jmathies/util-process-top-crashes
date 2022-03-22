@@ -91,6 +91,27 @@
         lastAnnotation - null;
       }
     }
+
+    function setClipboard(elementid) {
+      var el = document.getElementById(elementid);
+      /*
+      // needs 'dom.events.asyncClipboard.clipboardItem' enabled to work
+      var blob = new Blob([el.innerHTML], { type: 'text/html' });
+      var data = [new ClipboardItem({ 'text/html': blob })];
+      navigator.clipboard.write(data).then(
+        function () {
+        },
+        function () {
+        }
+      );
+      */
+      navigator.clipboard.writeText(el.innerText).then(function () {
+        /* clipboard successfully set */
+      }, function () {
+        /* clipboard write failed */
+      });
+    }
+
   </script>
 
   <!-- start of crash template -->
@@ -197,10 +218,10 @@
       </div>
       <div class="report">
         <div class="report-header">
-          <div class="report-meta-data-index">Report</div>
-          <div class="report-meta-data-meta">Meta</div>
+          <div class="report-meta-data-index">#</div>
+          <div class="report-meta-data-meta"></div>
           <div class="report-meta-data-compositor">Compositor</div>
-          <div class="report-meta-data-short">OOM Size</div>
+          <div class="report-meta-data-oom">OOM</div>
           <div class="report-meta-data-long">Hardware</div>
           <div class="report-meta-data-short">Gen</div>
           <div class="report-meta-data-short">Chipset</div>
@@ -216,14 +237,14 @@
           <div class="report-meta-data-index">$rindex</div>
           <div class="report-meta-data-meta"><a target="_blank" title="View meta data on redash" href="$infolink"><span class="icon fas fa-external-link-alt"></span></a> <span class="$startupiconclass fas fa-rocket"></span></div>
           <div class="report-meta-data-compositor">$compositor</div>
-          <div class="report-meta-data-short">$oomsize</div>
+          <div class="report-meta-data-oom">$oomsize</div>
           <div class="report-meta-data-long">$description</div>
           <div class="report-meta-data-short">$devgen</div>
           <div class="report-meta-data-short">$devchipset</div>
           <div class="report-meta-data-short">$drvver</div>
           <div class="report-meta-data-short">$drvdate</div>
-          <div class="report-meta-data-type">$type</div>
-          <div class="report-meta-data-reason">$reason</div>
+          <div class="report-meta-data-type" title="$type">$type</div>
+          <div class="report-meta-data-reason" title="$reason">$reason</div>
         </div>
         <div class="stack" style="display:none;" id="$expandostack">
           <!-- start of stackline template -->
@@ -234,6 +255,7 @@
             <div class="stack-frame">$frame</div>
           </div>
           <!-- end of stackline template -->
+          <div class="clickdiv" onclick="setClipboard('$expandostack'); return false;">copy stack</div>
         </div>
       </div>
       <!-- end of report template -->

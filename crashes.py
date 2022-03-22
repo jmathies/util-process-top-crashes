@@ -47,12 +47,10 @@ from fx_crash_sig.crash_processor import CrashProcessor
 # python crashes.py -n nightly -d nightly -u https://sql.telemetry.mozilla.org -k (userapikey) -q 79354 -p process_type=gpu -p version=89 -p channel=nightly
 
 ## TODO
+## stats statistics when loaded or written
 ## report struct may not need to os, osver, and arch info anymore since we added stats
-## speed up crash id searching
 ## signatures that went away feature
-## convert string sorts to int sorts for version numbers
 ## annotation signature keywords
-## copy stack feature
 ## click handler should ignore clicks if there's selection in the page
 ## popup panel layout (Fixed By and Notes) is confusing, and wide when it doesn't need to be.
 ## Remove reliance on version numbers? Need to get signature headers hooked up, and choose the latest releases for main reports
@@ -489,17 +487,17 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, cacheValue, para
     if not checkCrashAge(crashDate):
       totals['processed'] += 1
       totals['outdated'] += 1
+      progress(totals['processed'], crashesToProcess)
       continue
 
     # check if the crash id is processed, if so continue
     ## note, this search has become quite slow. optimize me.
     found = False
     signature = ""
-    for sig in reports:
-      for report in reports[sig]['reportList']:
-        if report['crashid'] == crashId:
+    for sighash in reports: # reports is a dictionary of signature hashes
+      for report in reports[sighash]['reportList']: # reportList is a list of dictionaries 
+        if report['crashid'] == crashId: # string compare, slow
           found = True
-          signature = sig
           # if you add a new value to the sql queries, you can update
           # the local json cache we have in memory here. Saves having
           # to delete the file and symbolicate everything again.
@@ -509,6 +507,7 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, cacheValue, para
 
     if found:
       totals['processed'] += 1
+      totals['alreadyProcessed'] += 1
       progress(totals['processed'], crashesToProcess)
       continue
   
@@ -519,6 +518,7 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, cacheValue, para
     if skipProcessSignature(signature):
       totals['processed'] += 1
       totals['skippedBadSig'] += 1
+      progress(totals['processed'], crashesToProcess)
       continue
 
     # pull stack information for the crashing thread
@@ -648,6 +648,9 @@ def processRedashDataset(dbFilename, jsonUrl, queryId, userKey, cacheValue, para
   queryFxVersion = parameters['version']
   purgeOldReports(reports, queryFxVersion)
 
+  # purge old crash and client ids from the stats database.
+  cleanupStats(reports, stats)
+
   # calculate unique client id counts for each signature. These are client counts
   # associated with the current redash query, and apply only to a seven day time
   # window. They are stored in the reports database and displayed in the top crash
@@ -672,6 +675,9 @@ def checkCrashAge(dateStr):
   oldestDate = datetime.today() - timedelta(days=7)
   return (date >= oldestDate)
 
+def getMainVer(version):
+  return version.split('.')[0]
+
 def purgeOldReports(reports, fxVersion):
   # Purge obsolete reports.
   # 89.0b7 89.0 90.0.1
@@ -682,8 +688,7 @@ def purgeOldReports(reports, fxVersion):
     for report in reports[hash]['reportList']:
       reportVer = ''
       try:
-        reportVer = report['firefoxver']
-        reportVer = reportVer[0:2]
+        reportVer = getMainVer(report['firefoxver'])
       except:
         pass
       if fxVersion == reportVer:
@@ -718,6 +723,50 @@ def purgeOldReports(reports, fxVersion):
     del reports[hash]
 
   print("Removed %d older signatures from our reports database." % len(delSigList))
+
+def cleanupStats(reports, stats):
+  # remove old crash and client ids we no longer have reports for
+  clientList = list()
+  crashList = list()
+  for hash in reports:
+    for report in reports[hash]['reportList']:
+      clientid = report['clientid']
+      crashid = report['crashid']
+      if clientid not in clientList:
+        clientList.append(clientid)
+      if crashid not in crashList:
+        crashList.append(crashid)
+
+  purgeClientIdList = list()
+  purgeCrashIdList = list()
+
+  for hash in stats:
+    for date in stats[hash]['crashdata'].keys():
+      for crashid in stats[hash]['crashdata'][date]['crashids']:
+        if crashid not in crashList:
+          if crashid not in purgeCrashIdList:
+            purgeCrashIdList.append(crashid)
+      for clientid in stats[hash]['crashdata'][date]['clientids']:
+        if clientid not in clientList:
+          if clientid not in purgeClientIdList:
+            purgeClientIdList.append(clientid)
+
+  for crashid in purgeCrashIdList:
+    for hash in stats:
+      for date in stats[hash]['crashdata'].keys():
+          if crashid in stats[hash]['crashdata'][date]['crashids']:
+            stats[hash]['crashdata'][date]['crashids'].remove(crashid)
+
+
+  for clientid in purgeClientIdList:
+    for hash in stats:
+      for date in stats[hash]['crashdata'].keys():
+          if clientid in stats[hash]['crashdata'][date]['clientids']:
+            stats[hash]['crashdata'][date]['clientids'].remove(clientid)
+  
+  print("Removed %d old client ids and %d old crash ids tracked in stats." % (len(purgeClientIdList), len(purgeCrashIdList)))
+
+  return True
 
 # return true if we should skip processing this signature
 def skipProcessSignature(signature):
@@ -1194,7 +1243,7 @@ def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
     sigCounter[hash] = len(reports[hash]['reportList'])
 
   collection = sigCounter.most_common(MostCommonLength)
-
+  
   sparklineJS = ''
 
   for hash, crashcount in collection:
@@ -1251,10 +1300,13 @@ def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
       idx = idx + 1
       if idx > MaxReportCount:
         break
-      oombytes = report['oomsize'] if not None else '0'
+      oombytes = report['oomsize']
+
 
       if report['oomsize'] is not None:
         oomIcon = 'icon'
+      else:
+        oombytes = ''
 
       crashReason = report['crashreason']
       if (crashReason == None):
@@ -1299,6 +1351,16 @@ def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
                                                               module=moduleName,
                                                               style=linkStyle)
 
+      compositor = report['compositor']
+      if compositor == 'webrender_software_d3d11':
+        compositor = 'd3d11'
+      elif compositor == 'webrender':
+        compositor = 'webrender'
+      elif compositor == 'webrender_software':
+        compositor = 'swiggle'
+      elif compositor == 'none':
+        compositor = ''
+
       reportHtml += Template(outerStackTemplate).substitute(expandostack=('st'+str(signatureIndex)+'-'+str(idx)),
                                                             rindex=idx,
                                                             type=crashType,
@@ -1309,7 +1371,7 @@ def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
                                                             description=report['devdescription'],
                                                             drvver=report['driverversion'],
                                                             drvdate=report['driverdate'],
-                                                            compositor=report['compositor'],
+                                                            compositor=compositor,
                                                             reason=crashReason,
                                                             infolink=infoLink,
                                                             startupiconclass=startupStyle,
@@ -1338,16 +1400,16 @@ def generateTopCrashReport(reports, stats, totalCrashesProcessed, processType,
     # ann$expandosig - view signature meta parameter
     annIconClass = 'lticon'
     if signature in annDb:
-      arec = record = annDb[signature]
-      # record['annotations'] (list)
+      record = annDb[signature]
+      # record['annotations'] { date: 'date', 'annotation': 'notes' }
       sigAnnotations = str()
-      # record['fixedby'] (list of tables, { 'version': 87, 'bug': 1234567 }
+      # record['fixedby'] (list of tables, { date: 'date', 'version': 87, 'bug': 1234567 }
       for fb in record['fixedby']:
         sigAnnotations += Template(annotationReport).substitute(annotations=escape(fb['annotation']),
                                                                 fixedbybug=createBugLink(str(fb['bug'])),
                                                                 fixedbyversion=fb['version'])
       for annotation in record['annotations']:
-        annotation = escape(annotation)
+        annotation = escape(annotation['annotation'])
         annotation = escapeBugLinks(annotation)
         sigAnnotations += Template(annotationReport).substitute(annotations=annotation, fixedbybug='', fixedbyversion='')
       annotationsHtml += Template(annotationTemplate).substitute(expandosig=('sig'+str(signatureIndex)),

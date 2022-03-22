@@ -8,6 +8,7 @@ import sys
 import re
 import html
 import pprint
+import datetime
 
 ###########################################################
 # Usage
@@ -21,7 +22,14 @@ import pprint
 #
 # examples:
 # python annotate.py -s "draw_quad_spans<T>" -a "filed Bug 1712938"
-# python annotate.py -s "mozilla::VideoFrameSurfaceVAAPI::ReleaseVAAPIData" -f 1752282 -v 98
+# python annotate.py -s "core::ops::function::Fn::call<T> | szDynamicDaylightDisabled" -f 1751177 -v 97.0.1
+# python annotate.py -s "core::ops::function::Fn::call<T> | env_logger::Builder::new" -f 1751177 -v 97.0.1
+
+# python annotate.py -s "" -a "Bug xyz"
+# python annotate.py -s "" -a "Bug xyz"
+# python annotate.py -s "" -a "Bug xyz"
+# python annotate.py -s "" -a "Bug xyz"
+# python annotate.py -s "" -a "Bug xyz"
 
 pp = pprint.PrettyPrinter(indent=2)
 
@@ -107,15 +115,17 @@ record = dict()
 if signature in annDb:
   record = annDb[signature]
 else:
-  record['annotations'] = list() # string list
+  record['annotations'] = list() # [n] = { date: '', annotation: '' }
   record['fixedby'] = list() # [n] = { 'version': '87.b0', 'bug': 1234567 }
 
+
 if fixedBy:
-  entry = { 'bug': bugId, 'version': appliesToFxVersion, 'annotation':annotation}
+  entry = { 'date':datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S'), 'bug': bugId, 'version': appliesToFxVersion, 'annotation':annotation}
   record['fixedby'].append(entry)
 elif len(annotation) > 0:
   annotation = annotation.strip("'\n \t")
-  record['annotations'].append(annotation)
+  entry = { 'date':datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S'), 'annotation':annotation}
+  record['annotations'].append(entry)
 
 
 annDb[signature] = record
