@@ -70,7 +70,7 @@ from fx_crash_sig.crash_processor import CrashProcessor
 ###########################################################
 
 # The default symbolication server to use.
-SymbolServerUrl = "https://symbolication.stage.mozaws.net/symbolicate/v5"
+SymbolServerUrl = "https://symbolication.services.mozilla.com/symbolicate/v5"
 # Max stack depth for symbolication
 MaxStackDepth = 50
 # Maximum number of raw crashes to process. This matches
