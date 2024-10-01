@@ -93,8 +93,6 @@ MaxAge = 43200
 # Set to True to target a local json file for testing
 LoadLocally = False
 LocalJsonFile = "GPU_Raw_Crash_Data_2021_03_19.json"
-# Default json file url if not specified via the command line.
-jsonUrl = "https://sql.telemetry.mozilla.org/api/queries/78997/results.json?api_key=0XTUThlCYJLBQaKsc8cR4296Y6fasm8vezkZSNPg"
 
 proc = CrashProcessor(MaxStackDepth, SymbolServerUrl)
 pp = pprint.PrettyPrinter(indent=1, width=260)

@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8" />
   <title>Utility Process Crash Reports</title>
-  <link rel="shortcut icon" href="./favicon.ico" type="image/x-icon">
+  <link rel="shortcut icon" type="image/png" href="favicon.png">
   <style>
     body {
       font: 16px Helvetica, Arial, sans-serif;
@@ -13,6 +13,12 @@
   </style>
 </head>
 <body>
+  Parent Process <a href="https://crash-stats.mozilla.org/search/?product=Firefox&process_type=browser">(crash-stats)</a><br />
+  <ul>
+    <li><a href="browsernightly.html">Nightly</a></li>
+    <li><a href="browserbeta.html">Beta</a></li>
+    <li><a href="browserrelease.html">Release</a></li>
+  </ul>
   GPU Process <a href="https://crash-stats.mozilla.org/search/?product=Firefox&process_type=gpu">(crash-stats)</a><br />
   <ul>
     <li><a href="gpunightly.html">Nightly</a></li>
@@ -43,5 +49,12 @@
     <li><a href="contentbeta.html">Beta</a></li>
     <li><a href="contentrelease.html">Release</a></li>
   </ul>
+  Gecko Media Plugin Process <a href="https://crash-stats.mozilla.org/search/?product=Firefox&process_type=gmplugin">(crash-stats)</a><br />
+  <ul>
+    <li><a href="gmpnightly.html">Nightly</a></li>
+    <li><a href="gmpbeta.html">Beta</a></li>
+    <li><a href="gmprelease.html">Release</a></li>
+  </ul>
+  Source for this report generator can be <a href="https://github.com/jmathies/util-process-top-crashes">found on Github</a>.
 </body>
 </html>
