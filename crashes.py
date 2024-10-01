@@ -63,7 +63,6 @@ from fx_crash_sig.crash_processor import CrashProcessor
 ## improve signature header information layout, particular fx version numbers. We can easily expand this down and host info similar to crash stats summary pages.
 ##  - filter graphing and the list based on clicks on the header data (version, os, arch)
 
-# python crashes.py -n beta -d beta -u https://sql.telemetry.mozilla.org -k nc2gV50AtsZHUpfmPwtR0F9ysiD8SateThgXUEba -q 79354 -p process_type=gpu -p version=90 -p channel=beta -s "draw_quad_spans<T>"
 
 ###########################################################
 # Globals
