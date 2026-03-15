@@ -1,3 +1,11 @@
+## Largly Obsolete
+
+This work ultimately morphed into https://crash-pings.mozilla.org/
+
+No longer maintained.
+
+--
+
 Python utility for pulling Mozilla redash crash ping telemetry down and generating top crash reports for Firefox utility processes.
 
 Note, to get the html displaying right, you'll need to download fontawesome webfonts and store it in the root under 'fontawesome'.
